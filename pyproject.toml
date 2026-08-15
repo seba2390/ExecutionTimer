@@ -5,7 +5,22 @@ description = "Hierarchical execution timing with user-defined categories."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.14"
+authors = [{ name = "Sebastian Yde Madsen" }]
+keywords = ["timing", "profiling", "benchmark", "execution-time"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development",
+    "Typing :: Typed",
+]
 dependencies = []
+
+[project.urls]
+Repository = "https://github.com/seba2390/ExecutionTimer"
+Issues = "https://github.com/seba2390/ExecutionTimer/issues"
 
 [build-system]
 requires = ["hatchling"]
@@ -18,11 +33,20 @@ packages = ["src/execution_timer"]
 dev = [
     "basedpyright>=1.39.10",
     "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
     "ruff>=0.16.3",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["src/execution_timer"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError"]
 
 [tool.ruff]
 target-version = "py314"

@@ -41,6 +41,10 @@ from execution_timer import register_forbidden_nesting
 register_forbidden_nesting(outer="gpu", inner="cpu")
 ```
 
+### Thread safety
+
+The active-context stack is thread-local, so sections recorded concurrently on different threads nest independently and merge into one process-wide report. Recording the *same* section path from overlapping threads is not meaningful.
+
 ## API
 
 - `TimerContext(name, category=DEFAULT_CATEGORY, counter=None)` — context manager / decorator.

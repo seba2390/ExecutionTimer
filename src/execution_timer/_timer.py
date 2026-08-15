@@ -1,13 +1,19 @@
-"""Hierarchical execution timing with user-defined categories."""
+"""Hierarchical execution timing with user-defined categories.
+
+Timings are stored in a process-wide registry. The active-context stack is thread-local,
+so sections recorded concurrently on different threads nest independently and merge into
+one report. Recording the *same* section path from overlapping threads is not meaningful.
+"""
 
 from __future__ import annotations
 
 import functools
 import logging
+import threading
 import time
 from collections.abc import Callable
 from types import TracebackType
-from typing import ClassVar, Final, ParamSpec, TypedDict, TypeVar
+from typing import ClassVar, Final, ParamSpec, TypedDict, TypeVar, cast
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -33,55 +39,91 @@ class _ExecutionTimer:
 
     _instance: ClassVar[_ExecutionTimer | None] = None
     timings: ClassVar[dict[tuple[str, ...], _TimesDict]] = {}
-    active_context: ClassVar[list[str]] = []
-    active_categories: ClassVar[list[str]] = []
     forbidden_nesting: ClassVar[set[tuple[str, str]]] = set()
+
+    _local: threading.local
+    _lock: threading.Lock
 
     def __new__(cls) -> _ExecutionTimer:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
 
+    def __init__(self) -> None:
+        # __init__ runs on every call, so initialize per-instance state only once.
+        if not hasattr(self, "_local"):
+            self._local = threading.local()
+            self._lock = threading.Lock()
+
+    @property
+    def _context(self) -> list[str]:
+        if not hasattr(self._local, "context"):
+            self._local.context = []
+        return cast(list[str], self._local.context)
+
+    @property
+    def _categories(self) -> list[str]:
+        if not hasattr(self._local, "categories"):
+            self._local.categories = []
+        return cast(list[str], self._local.categories)
+
     @property
     def _full_name(self) -> tuple[str, ...]:
-        return tuple(self.active_context)
+        return tuple(self._context)
 
     def start_timer(self, name: str, category: str) -> None:
         """Start timing a section under the given name within the active context."""
         self._add_context(name, category)
         full_name = self._full_name
         start_time = time.perf_counter()
-        if full_name not in self.timings:
-            self.timings[full_name] = {"start_time": start_time, "elapsed_time": 0.0, "category": category}
-        else:
-            self.timings[full_name]["start_time"] = start_time
+        with self._lock:
+            if full_name not in self.timings:
+                self.timings[full_name] = {"start_time": start_time, "elapsed_time": 0.0, "category": category}
+            else:
+                entry = self.timings[full_name]
+                entry["start_time"] = start_time
+                entry["category"] = category
 
     def stop_timer(self, name: str) -> None:
         """Stop timing a section and accumulate its elapsed time."""
         end_time = time.perf_counter()
         full_name = self._full_name
-        self.timings[full_name]["elapsed_time"] += end_time - self.timings[full_name]["start_time"]
+        with self._lock:
+            self.timings[full_name]["elapsed_time"] += end_time - self.timings[full_name]["start_time"]
         self._remove_context(name)
 
     def _add_context(self, name: str, category: str) -> None:
-        if self.active_categories and (self.active_categories[-1], category) in self.forbidden_nesting:
-            msg = f"Category '{category}' is not allowed inside category '{self.active_categories[-1]}'."
+        if self._categories and (self._categories[-1], category) in self.forbidden_nesting:
+            msg = f"Category '{category}' is not allowed inside category '{self._categories[-1]}'."
             raise ValueError(msg)
-        self.active_context.append(name)
-        self.active_categories.append(category)
+        self._context.append(name)
+        self._categories.append(category)
 
     def _remove_context(self, name: str) -> None:
-        if self.active_context and self.active_context[-1] == name:
-            del self.active_context[-1]
-            del self.active_categories[-1]
+        """Pop the innermost context, restoring the stack to its state before ``name`` was entered."""
+        context = self._context
+        if not context:
+            return
+        # Pop through the matching frame so a mismatched or out-of-order exit cannot corrupt the stack.
+        while context:
+            popped = context.pop()
+            del self._categories[-1]
+            if popped == name:
+                break
 
     def compute_flattened_timings(self) -> dict[tuple[str, ...], _TimesDict]:
-        """Aggregate elapsed times with counter suffixes removed from section names."""
+        """Aggregate elapsed times with counter suffixes removed from section names.
+
+        When counter variants of one section are merged, elapsed times are summed and the
+        most recently recorded category is kept.
+        """
         flat_map: dict[tuple[str, ...], _TimesDict] = {}
         for key, info in self.timings.items():
             flat_key = tuple(_basic_name_without_counter(part) for part in key)
             if flat_key in flat_map:
-                flat_map[flat_key]["elapsed_time"] += info["elapsed_time"]
+                existing = flat_map[flat_key]
+                existing["elapsed_time"] += info["elapsed_time"]
+                existing["category"] = info["category"]
             else:
                 flat_map[flat_key] = info.copy()
         return flat_map

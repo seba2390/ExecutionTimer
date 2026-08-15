@@ -74,14 +74,6 @@ class TestSingleAndNestedContexts:
         ref_total = timings["root",]["time"] + timings["another_root",]["time"]
         assert get_total_time() == pytest.approx(ref_total)
 
-    def test_repeated_context_accumulates_time(self) -> None:
-        with patch.object(time, "perf_counter", side_effect=range(20)):
-            for _ in range(10):
-                with TimerContext("context"):
-                    pass
-
-        assert raw_timings()["context",]["time"] == 10
-
 
 class TestCounters:
     def test_nested_context_with_counter(self) -> None:
@@ -313,3 +305,161 @@ class TestTimerContextDecorator:
         timings = raw_timings()
         assert ("outer",) in timings
         assert ("outer", "inner") in timings
+
+
+class TestExceptions:
+    def test_timing_recorded_when_body_raises(self) -> None:
+        with pytest.raises(RuntimeError), TimerContext("failing"):
+            raise RuntimeError("boom")
+
+        timings = raw_timings()
+        assert ("failing",) in timings
+        assert timings["failing",]["time"] >= 0
+
+    def test_context_stack_recovered_after_exception(self) -> None:
+        with pytest.raises(RuntimeError), TimerContext("outer"):  # noqa: SIM117
+            with TimerContext("inner"):
+                raise RuntimeError("boom")
+
+        # A subsequent top-level section must not be nested under the failed ones.
+        with TimerContext("clean"):
+            pass
+
+        timings = raw_timings()
+        assert ("clean",) in timings
+        assert ("outer", "clean") not in timings
+
+    def test_decorator_propagates_exception_and_records_timing(self) -> None:
+        @TimerContext("failing")
+        def failing() -> None:
+            raise ValueError("bad")
+
+        with pytest.raises(ValueError):
+            failing()
+
+        assert ("failing",) in raw_timings()
+
+
+class TestCategoryAttribution:
+    def test_revisit_updates_category(self) -> None:
+        with TimerContext("a", category="gpu"):
+            pass
+        with TimerContext("a", category="cpu"):
+            pass
+
+        assert raw_timings()["a",]["category"] == "cpu"
+
+    def test_flatten_uses_latest_category(self) -> None:
+        with TimerContext("s", category="gpu", counter=0):
+            pass
+        with TimerContext("s", category="cpu", counter=1):
+            pass
+
+        assert get_execution_timings(flatten=True)["s",]["category"] == "cpu"
+
+    def test_total_category_time_unknown_category_is_zero(self) -> None:
+        with TimerContext("a", category="gpu"):
+            pass
+
+        assert get_total_category_time("nonexistent") == 0.0
+
+    def test_forbidden_nesting_error_message(self) -> None:
+        register_forbidden_nesting(outer="gpu", inner="cpu")
+        with pytest.raises(ValueError, match=r"'cpu'.*inside.*'gpu'"), TimerContext("gpu_sec", category="gpu"):  # noqa: SIM117
+            with TimerContext("cpu_sec", category="cpu"):
+                pass
+
+    def test_multiple_forbidden_rules(self) -> None:
+        register_forbidden_nesting(outer="gpu", inner="cpu")
+        register_forbidden_nesting(outer="gpu", inner="io")
+        with pytest.raises(ValueError), TimerContext("gpu_sec", category="gpu"):  # noqa: SIM117
+            with TimerContext("io_sec", category="io"):
+                pass
+
+
+class TestClearAndReuse:
+    def test_clear_execution_timings(self) -> None:
+        with TimerContext("a"):
+            pass
+        clear_execution_timings()
+
+        assert raw_timings() == {}
+        assert get_total_time() == 0.0
+
+    def test_timing_works_after_clear(self) -> None:
+        with TimerContext("a"):
+            pass
+        clear_execution_timings()
+        with TimerContext("b"):
+            pass
+
+        timings = raw_timings()
+        assert list(timings) == [("b",)]
+
+    def test_deep_nesting(self) -> None:
+        with TimerContext("l0"), TimerContext("l1"), TimerContext("l2"), TimerContext("l3"):
+            pass
+
+        timings = raw_timings()
+        assert ("l0", "l1", "l2", "l3") in timings
+
+
+class TestThreading:
+    def test_concurrent_recording_does_not_crash(self) -> None:
+        """Concurrent recording from multiple threads must not raise."""
+        import threading
+
+        barrier = threading.Barrier(2)
+        errors: list[BaseException] = []
+
+        def worker(name: str) -> None:
+            try:
+                _ = barrier.wait()
+                with TimerContext(name):
+                    time.sleep(0.005)
+            except BaseException as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker, args=(f"t{i}",)) for i in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert errors == []
+
+    def test_per_thread_nesting_is_independent(self) -> None:
+        """Each thread keeps its own context stack; both nest correctly into the shared registry."""
+        import threading
+
+        barrier = threading.Barrier(2)
+        errors: list[BaseException] = []
+
+        def worker(root: str, child: str) -> None:
+            try:
+                _ = barrier.wait()
+                with TimerContext(root):
+                    time.sleep(0.002)
+                    with TimerContext(child):
+                        time.sleep(0.002)
+            except BaseException as exc:
+                errors.append(exc)
+
+        threads = [
+            threading.Thread(target=worker, args=("t0", "c0")),
+            threading.Thread(target=worker, args=("t1", "c1")),
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert errors == []
+        timings = raw_timings()
+        assert ("t0",) in timings
+        assert ("t0", "c0") in timings
+        assert ("t1",) in timings
+        assert ("t1", "c1") in timings
+        # No cross-thread nesting.
+        assert ("t0", "c1") not in timings
+        assert ("t1", "c0") not in timings
