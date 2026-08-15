@@ -1,0 +1,203 @@
+"""Hierarchical execution timing with user-defined categories."""
+
+from __future__ import annotations
+
+import functools
+import logging
+import time
+from collections.abc import Callable
+from types import TracebackType
+from typing import ClassVar, Final, ParamSpec, TypedDict, TypeVar
+
+P = ParamSpec("P")
+R = TypeVar("R")
+
+DEFAULT_CATEGORY: Final = "default"
+
+
+class TimingReport(TypedDict):
+    """Timing entry for one section: elapsed seconds and its category."""
+
+    time: float
+    category: str
+
+
+class _TimesDict(TypedDict):
+    start_time: float
+    elapsed_time: float
+    category: str
+
+
+class _ExecutionTimer:
+    """Singleton registry of named, nestable timing sections."""
+
+    _instance: ClassVar[_ExecutionTimer | None] = None
+    timings: ClassVar[dict[tuple[str, ...], _TimesDict]] = {}
+    active_context: ClassVar[list[str]] = []
+    active_categories: ClassVar[list[str]] = []
+    forbidden_nesting: ClassVar[set[tuple[str, str]]] = set()
+
+    def __new__(cls) -> _ExecutionTimer:
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    @property
+    def _full_name(self) -> tuple[str, ...]:
+        return tuple(self.active_context)
+
+    def start_timer(self, name: str, category: str) -> None:
+        """Start timing a section under the given name within the active context."""
+        self._add_context(name, category)
+        full_name = self._full_name
+        start_time = time.perf_counter()
+        if full_name not in self.timings:
+            self.timings[full_name] = {"start_time": start_time, "elapsed_time": 0.0, "category": category}
+        else:
+            self.timings[full_name]["start_time"] = start_time
+
+    def stop_timer(self, name: str) -> None:
+        """Stop timing a section and accumulate its elapsed time."""
+        end_time = time.perf_counter()
+        full_name = self._full_name
+        self.timings[full_name]["elapsed_time"] += end_time - self.timings[full_name]["start_time"]
+        self._remove_context(name)
+
+    def _add_context(self, name: str, category: str) -> None:
+        if self.active_categories and (self.active_categories[-1], category) in self.forbidden_nesting:
+            msg = f"Category '{category}' is not allowed inside category '{self.active_categories[-1]}'."
+            raise ValueError(msg)
+        self.active_context.append(name)
+        self.active_categories.append(category)
+
+    def _remove_context(self, name: str) -> None:
+        if self.active_context and self.active_context[-1] == name:
+            del self.active_context[-1]
+            del self.active_categories[-1]
+
+    def compute_flattened_timings(self) -> dict[tuple[str, ...], _TimesDict]:
+        """Aggregate elapsed times with counter suffixes removed from section names."""
+        flat_map: dict[tuple[str, ...], _TimesDict] = {}
+        for key, info in self.timings.items():
+            flat_key = tuple(_basic_name_without_counter(part) for part in key)
+            if flat_key in flat_map:
+                flat_map[flat_key]["elapsed_time"] += info["elapsed_time"]
+            else:
+                flat_map[flat_key] = info.copy()
+        return flat_map
+
+    def report_timings(self, *, flatten: bool = True) -> str:
+        """Build a report of all sections with duration and percentage of total time."""
+        timings = self.compute_flattened_timings() if flatten else self.timings
+
+        total_time = self.compute_total_time(flatten=flatten)
+        if not total_time:
+            logging.warning("No timings to report.")
+            return ""
+
+        report = [f"\nTotal calculation time: {total_time:.4f} s.\n"]
+        for key, info in timings.items():
+            elapsed_time = info["elapsed_time"]
+            percentage = (elapsed_time / total_time) * 100
+            report.append(f"{'..  ' * (len(key) - 1)}{key[-1]}: {elapsed_time:.4f} s ({percentage:.2f}%)")
+        return "\n".join(report)
+
+    def compute_total_time(self, *, flatten: bool = True) -> float:
+        """Compute total elapsed time across all top-level sections."""
+        timings = self.compute_flattened_timings() if flatten else self.timings
+        return sum(info["elapsed_time"] for key, info in timings.items() if len(key) == 1)
+
+    def compute_total_category_time(self, category: str) -> float:
+        """Compute total elapsed time in a category, counting only top-most entries of that category."""
+        total_time = 0.0
+        for key, info in self.timings.items():
+            if info["category"] != category or self._has_ancestor_with_category(key, category):
+                continue
+            total_time += info["elapsed_time"]
+        return total_time
+
+    def _has_ancestor_with_category(self, key: tuple[str, ...], category: str) -> bool:
+        return any(
+            key[:i] in self.timings and self.timings[key[:i]]["category"] == category for i in range(1, len(key))
+        )
+
+    def get_execution_timings(self, *, flatten: bool = True) -> dict[tuple[str, ...], TimingReport]:
+        """Return elapsed seconds and category for every recorded section."""
+        timings = self.compute_flattened_timings() if flatten else self.timings
+        return {key: {"time": info["elapsed_time"], "category": info["category"]} for key, info in timings.items()}
+
+
+class TimerContext:
+    """Context manager and decorator for timing a named section of code."""
+
+    def __init__(self, name: str, category: str = DEFAULT_CATEGORY, counter: int | None = None) -> None:
+        self.name: str = _build_name_with_counter(name, counter)
+        self.category: str = category
+        self.timer: _ExecutionTimer = _ExecutionTimer()
+
+    def __enter__(self) -> None:
+        self.timer.start_timer(self.name, self.category)
+
+    def __exit__(
+        self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: TracebackType | None
+    ) -> None:
+        self.timer.stop_timer(self.name)
+
+    def __call__(self, func: Callable[P, R]) -> Callable[P, R]:
+        """Decorate a function to time its execution under this context."""
+
+        @functools.wraps(func)
+        def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+            with TimerContext(self.name, self.category):
+                return func(*args, **kwargs)
+
+        return wrapper
+
+
+def _build_name_with_counter(name: str, counter: int | None = None) -> str:
+    """Append ``[counter]`` to a section name if a counter is provided."""
+    if counter is None:
+        return name
+    return f"{name}[{counter}]"
+
+
+def _basic_name_without_counter(name: str) -> str:
+    """Strip a trailing ``[counter]`` from a section name if present."""
+    if "[" in name and name.endswith("]"):
+        return name[: name.rfind("[")]
+    return name
+
+
+def get_execution_times_report(*, flatten: bool = True) -> str:
+    """Get a formatted report of all recorded sections; flatten counters if requested."""
+    return _ExecutionTimer().report_timings(flatten=flatten)
+
+
+def get_execution_timings(*, flatten: bool = True) -> dict[tuple[str, ...], TimingReport]:
+    """Get elapsed seconds and category for every recorded section; flatten counters if requested."""
+    return _ExecutionTimer().get_execution_timings(flatten=flatten)
+
+
+def get_total_time(*, flatten: bool = True) -> float:
+    """Get total elapsed seconds across all top-level sections."""
+    return _ExecutionTimer().compute_total_time(flatten=flatten)
+
+
+def get_total_category_time(category: str) -> float:
+    """Get total elapsed seconds in a category, counting only top-most entries of that category."""
+    return _ExecutionTimer().compute_total_category_time(category)
+
+
+def clear_execution_timings() -> None:
+    """Reset all recorded timings."""
+    _ExecutionTimer.timings = {}
+
+
+def register_forbidden_nesting(outer: str, inner: str) -> None:
+    """Forbid timing sections of category ``inner`` directly inside sections of category ``outer``."""
+    _ExecutionTimer.forbidden_nesting.add((outer, inner))
+
+
+def clear_forbidden_nesting() -> None:
+    """Remove all forbidden-nesting rules."""
+    _ExecutionTimer.forbidden_nesting = set()
