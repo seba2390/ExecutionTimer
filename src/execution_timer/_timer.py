@@ -8,10 +8,12 @@ one report. Recording the *same* section path from overlapping threads is not me
 from __future__ import annotations
 
 import functools
+import json
 import logging
 import threading
 import time
 from collections.abc import Callable
+from pathlib import Path
 from types import TracebackType
 from typing import ClassVar, Final, ParamSpec, TypedDict, TypeVar, cast
 
@@ -26,6 +28,23 @@ class TimingReport(TypedDict):
 
     time: float
     category: str
+
+
+class SectionRecord(TypedDict):
+    """One section in the JSON export."""
+
+    name: str
+    path: list[str]
+    time: float
+    category: str
+
+
+class TimingsPayload(TypedDict):
+    """Top-level JSON export payload."""
+
+    total_time: float
+    total_category_time: dict[str, float]
+    sections: list[SectionRecord]
 
 
 class _TimesDict(TypedDict):
@@ -215,9 +234,42 @@ def get_execution_times_report(*, flatten: bool = True) -> str:
     return _ExecutionTimer().report_timings(flatten=flatten)
 
 
+def log_execution_times(*, flatten: bool = True, logger: logging.Logger | None = None) -> None:
+    """Log the execution-times report at INFO level; flatten counters if requested."""
+    (logger or logging.getLogger(__name__)).info(get_execution_times_report(flatten=flatten))
+
+
 def get_execution_timings(*, flatten: bool = True) -> dict[tuple[str, ...], TimingReport]:
     """Get elapsed seconds and category for every recorded section; flatten counters if requested."""
     return _ExecutionTimer().get_execution_timings(flatten=flatten)
+
+
+def _build_payload(*, flatten: bool = True) -> TimingsPayload:
+    """Build a JSON-serializable snapshot of all timings, including totals and per-category sums."""
+    timer = _ExecutionTimer()
+    timings = timer.get_execution_timings(flatten=flatten)
+    sections: list[SectionRecord] = [
+        {"name": key[-1], "path": list(key), "time": round(info["time"], 6), "category": info["category"]}
+        for key, info in timings.items()
+    ]
+    categories = sorted({info["category"] for info in timings.values()})
+    return {
+        "total_time": round(timer.compute_total_time(flatten=flatten), 6),
+        "total_category_time": {cat: round(timer.compute_total_category_time(cat), 6) for cat in categories},
+        "sections": sections,
+    }
+
+
+def get_execution_times_json(*, flatten: bool = True, indent: int | None = 2) -> str:
+    """Get all timings as a JSON string (LLM-friendly); flatten counters if requested."""
+    return json.dumps(_build_payload(flatten=flatten), indent=indent)
+
+
+def save_execution_timings_json(path: str | Path, *, flatten: bool = True, indent: int | None = 2) -> Path:
+    """Write all timings to a JSON file and return its path; flatten counters if requested."""
+    out = Path(path)
+    _ = out.write_text(get_execution_times_json(flatten=flatten, indent=indent) + "\n", encoding="utf-8")
+    return out
 
 
 def get_total_time(*, flatten: bool = True) -> float:

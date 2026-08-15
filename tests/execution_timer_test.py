@@ -1,22 +1,29 @@
 """Tests for the execution timer, using only the public API."""
 
+import json
+import logging
 import time
 from collections.abc import Iterator
+from pathlib import Path
+from typing import cast
 from unittest.mock import patch
 
 import pytest
-
 from execution_timer import (
     DEFAULT_CATEGORY,
     TimerContext,
     TimingReport,
+    TimingsPayload,
     clear_execution_timings,
     clear_forbidden_nesting,
+    get_execution_times_json,
     get_execution_times_report,
     get_execution_timings,
     get_total_category_time,
     get_total_time,
+    log_execution_times,
     register_forbidden_nesting,
+    save_execution_timings_json,
 )
 
 
@@ -247,6 +254,66 @@ class TestReporting:
         assert get_total_category_time("cpu") == pytest.approx(1.0)
         assert get_total_category_time("gpu") == pytest.approx(1.0)
         assert get_total_time() == pytest.approx(2.0)
+
+
+class TestOutput:
+    def test_log_execution_times_logs_report(self, caplog: pytest.LogCaptureFixture) -> None:
+        with TimerContext("logged"):
+            pass
+
+        with caplog.at_level(logging.INFO):
+            log_execution_times()
+
+        assert "Total calculation time" in caplog.text
+        assert "logged:" in caplog.text
+
+    def test_get_execution_times_json_is_valid_and_structured(self) -> None:
+        with patch.object(time, "perf_counter", side_effect=[0, 1, 1, 2, 2, 3]):
+            with TimerContext("root", category="gpu"):
+                pass
+            with TimerContext("child_root"):  # noqa: SIM117
+                with TimerContext("child", category="cpu"):
+                    pass
+
+        payload = cast(TimingsPayload, json.loads(get_execution_times_json()))
+
+        # Total time is the sum of top-level sections only.
+        assert payload["total_time"] == pytest.approx(get_total_time())
+        assert set(payload["total_category_time"]) == {"gpu", "default", "cpu"}
+        by_path = {tuple(s["path"]): s for s in payload["sections"]}
+        assert set(by_path) == {("root",), ("child_root",), ("child_root", "child")}
+        assert by_path["root",]["category"] == "gpu"
+        assert by_path["child_root", "child"]["category"] == "cpu"
+
+    def test_get_execution_times_json_flattens_counters(self) -> None:
+        with patch.object(time, "perf_counter", side_effect=[0, 1, 1, 2]):
+            for i in range(2):
+                with TimerContext("step", counter=i):
+                    pass
+
+        flat_payload = cast(TimingsPayload, json.loads(get_execution_times_json(flatten=True)))
+        paths = {tuple(s["path"]) for s in flat_payload["sections"]}
+        assert ("step",) in paths
+        assert ("step[0]",) not in paths
+
+    def test_save_execution_timings_json_writes_file(self, tmp_path: Path) -> None:
+        with TimerContext("saved", category="gpu"):
+            pass
+
+        out = save_execution_timings_json(tmp_path / "timings.json")
+
+        assert out.exists()
+        file_payload = cast(TimingsPayload, json.loads(out.read_text(encoding="utf-8")))
+        assert {tuple(s["path"]) for s in file_payload["sections"]} == {("saved",)}
+
+    def test_save_execution_timings_json_accepts_str_path(self, tmp_path: Path) -> None:
+        with TimerContext("saved"):
+            pass
+
+        out = save_execution_timings_json(str(tmp_path / "t.json"))
+
+        assert isinstance(out, Path)
+        assert out.exists()
 
 
 class TestTimerContextDecorator:

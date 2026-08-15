@@ -49,11 +49,35 @@ The active-context stack is thread-local, so sections recorded concurrently on d
 
 - `TimerContext(name, category=DEFAULT_CATEGORY, counter=None)` — context manager / decorator.
 - `get_execution_times_report(flatten=True)` — formatted report of all sections.
+- `log_execution_times(flatten=True, logger=None)` — log the report at INFO level.
 - `get_execution_timings(flatten=True)` — timings as a `dict[tuple[str, ...], TimingReport]`.
+- `get_execution_times_json(flatten=True, indent=2)` — all timings as a JSON string.
+- `save_execution_timings_json(path, flatten=True, indent=2)` — write timings to a JSON file (LLM-friendly).
 - `get_total_time(flatten=True)` — total seconds across all top-level sections.
 - `get_total_category_time(category)` — total seconds spent in a category (top-level entries only).
 - `clear_execution_timings()` — reset all recorded timings.
 - `register_forbidden_nesting(outer, inner)` / `clear_forbidden_nesting()` — manage nesting rules.
+
+### Exporting results
+
+The JSON export is structured for easy inspection by a language model or other tooling:
+
+```python
+from execution_timer import save_execution_timings_json
+
+save_execution_timings_json("timings.json")
+```
+
+```json
+{
+  "total_time": 2.5,
+  "total_category_time": { "gpu": 1.2, "cpu": 1.3 },
+  "sections": [
+    { "name": "solve", "path": ["solve"], "time": 2.5, "category": "default" },
+    { "name": "step", "path": ["solve", "step"], "time": 1.2, "category": "gpu" }
+  ]
+}
+```
 
 ## Development
 
