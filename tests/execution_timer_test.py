@@ -9,6 +9,7 @@ from typing import cast
 from unittest.mock import patch
 
 import pytest
+
 from execution_timer import (
     DEFAULT_CATEGORY,
     TimerContext,

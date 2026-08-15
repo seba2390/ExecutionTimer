@@ -4,9 +4,38 @@ Hierarchical execution timing with user-defined categories, via a singleton time
 
 ## Installation
 
+Not yet on PyPI. Install into another project one of three ways:
+
+**From git (recommended)** — always latest `main`:
+
 ```bash
-pip install execution-timer
+uv pip install "git+https://github.com/seba2390/ExecutionTimer.git"
+# or pin a commit/tag:
+uv pip install "git+https://github.com/seba2390/ExecutionTimer.git@v0.1.0"
 ```
+
+Or in the other project's `pyproject.toml`:
+
+```toml
+dependencies = ["execution-timer @ git+https://github.com/seba2390/ExecutionTimer.git"]
+```
+
+**From a wheel** — build once, then install the artifact anywhere:
+
+```bash
+./build.sh                                   # produces dist/execution_timer-<ver>-py3-none-any.whl
+uv pip install dist/execution_timer-*-py3-none-any.whl
+```
+
+Or reference the wheel in the other project's `pyproject.toml`:
+
+```toml
+dependencies = ["execution-timer @ file:///absolute/path/to/execution_timer-0.1.0-py3-none-any.whl"]
+```
+
+**From CI** — every push to `main` builds a wheel; download it from the workflow's "execution-timer-dist" artifact and install as above.
+
+Requires Python 3.14+.
 
 ## Usage
 
