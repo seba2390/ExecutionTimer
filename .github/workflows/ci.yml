@@ -109,3 +109,18 @@ jobs:
             cmp "$built" "dist-roundtrip/$(basename "$built")"
             echo "round-tripped unchanged: $(basename "$built")"
           done
+
+  # Single required status check for branch protection. Requiring the matrix jobs by name
+  # would wedge every pull request the moment the matrix changes, because the old names
+  # stop reporting and GitHub waits on them forever.
+  ci-passed:
+    name: CI passed
+    if: always()
+    needs: [lint, test, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any job did not succeed
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: |
+          echo "One or more CI jobs did not succeed."
+          exit 1
