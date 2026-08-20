@@ -101,5 +101,11 @@ jobs:
           name: dist
           path: dist-roundtrip/
 
+      # Compares the distributions themselves rather than the whole directory: uv build
+      # leaves a .gitignore in dist/, and upload-artifact omits hidden files by design.
       - name: Verify the round-trip is byte-identical
-        run: diff --recursive dist/ dist-roundtrip/
+        run: |
+          for built in dist/*.whl dist/*.tar.gz; do
+            cmp "$built" "dist-roundtrip/$(basename "$built")"
+            echo "round-tripped unchanged: $(basename "$built")"
+          done
