@@ -18,12 +18,15 @@ from execution_timer._timer import (
     save_execution_timings_json,
 )
 
+__version__ = "0.1.0"
+
 __all__ = [
     "DEFAULT_CATEGORY",
     "SectionRecord",
     "TimerContext",
     "TimingReport",
     "TimingsPayload",
+    "__version__",
     "clear_execution_timings",
     "clear_forbidden_nesting",
     "get_execution_times_json",

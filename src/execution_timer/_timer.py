@@ -1,26 +1,35 @@
 """Hierarchical execution timing with user-defined categories.
 
-Timings are stored in a process-wide registry. The active-context stack is thread-local,
-so sections recorded concurrently on different threads nest independently and merge into
-one report. Recording the *same* section path from overlapping threads is not meaningful.
+Timings are stored in a process-wide registry guarded by a lock. The active-context stack
+lives in a :class:`~contextvars.ContextVar`, so it is isolated per thread *and* per asyncio
+task: sections recorded concurrently nest independently and merge into one report.
+Recording the *same* section path from overlapping threads or tasks is not meaningful.
 """
 
 from __future__ import annotations
 
 import functools
+import inspect
 import json
 import logging
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine, Iterable
+from contextvars import ContextVar
 from pathlib import Path
 from types import TracebackType
 from typing import ClassVar, Final, ParamSpec, TypedDict, TypeVar, cast
 
 P = ParamSpec("P")
 R = TypeVar("R")
+T = TypeVar("T")
 
 DEFAULT_CATEGORY: Final = "default"
+
+_LOGGER: Final = logging.getLogger(__name__)
+
+# Stack of (name, category) frames for the current thread / asyncio task.
+_ACTIVE_CONTEXT: ContextVar[tuple[tuple[str, str], ...]] = ContextVar("execution_timer_context", default=())
 
 
 class TimingReport(TypedDict):
@@ -53,42 +62,55 @@ class _TimesDict(TypedDict):
     category: str
 
 
+def _ordered_by_hierarchy(keys: Iterable[tuple[str, ...]]) -> list[tuple[str, ...]]:
+    """Order section paths depth-first so children always follow their parent.
+
+    Insertion order is preserved within each level, so a parent revisited after an unrelated
+    sibling still renders with its own children rather than beneath the sibling.
+    """
+    keys = list(keys)
+    known = set(keys)
+    children: dict[tuple[str, ...], list[tuple[str, ...]]] = {}
+    roots: list[tuple[str, ...]] = []
+    for key in keys:
+        parent = key[:-1]
+        # Treat a section whose parent was never recorded as a root so it cannot be dropped.
+        if parent and parent in known:
+            children.setdefault(parent, []).append(key)
+        else:
+            roots.append(key)
+
+    ordered: list[tuple[str, ...]] = []
+    # Explicit stack rather than recursion: nesting depth is user-controlled.
+    stack = list(reversed(roots))
+    while stack:
+        key = stack.pop()
+        ordered.append(key)
+        stack.extend(reversed(children.get(key, [])))
+    return ordered
+
+
 class _ExecutionTimer:
     """Singleton registry of named, nestable timing sections."""
 
     _instance: ClassVar[_ExecutionTimer | None] = None
+    _lock: ClassVar[threading.Lock] = threading.Lock()
     timings: ClassVar[dict[tuple[str, ...], _TimesDict]] = {}
     forbidden_nesting: ClassVar[set[tuple[str, str]]] = set()
-
-    _local: threading.local
-    _lock: threading.Lock
 
     def __new__(cls) -> _ExecutionTimer:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
 
-    def __init__(self) -> None:
-        # __init__ runs on every call, so initialize per-instance state only once.
-        if not hasattr(self, "_local"):
-            self._local = threading.local()
-            self._lock = threading.Lock()
-
-    @property
-    def _context(self) -> list[str]:
-        if not hasattr(self._local, "context"):
-            self._local.context = []
-        return cast(list[str], self._local.context)
-
-    @property
-    def _categories(self) -> list[str]:
-        if not hasattr(self._local, "categories"):
-            self._local.categories = []
-        return cast(list[str], self._local.categories)
-
     @property
     def _full_name(self) -> tuple[str, ...]:
-        return tuple(self._context)
+        return tuple(frame[0] for frame in _ACTIVE_CONTEXT.get())
+
+    def _snapshot(self) -> dict[tuple[str, ...], _TimesDict]:
+        """Copy the registry under the lock so readers never iterate a mutating dict."""
+        with self._lock:
+            return {key: info.copy() for key, info in self.timings.items()}
 
     def start_timer(self, name: str, category: str) -> None:
         """Start timing a section under the given name within the active context."""
@@ -96,10 +118,10 @@ class _ExecutionTimer:
         full_name = self._full_name
         start_time = time.perf_counter()
         with self._lock:
-            if full_name not in self.timings:
+            entry = self.timings.get(full_name)
+            if entry is None:
                 self.timings[full_name] = {"start_time": start_time, "elapsed_time": 0.0, "category": category}
             else:
-                entry = self.timings[full_name]
                 entry["start_time"] = start_time
                 entry["category"] = category
 
@@ -108,27 +130,31 @@ class _ExecutionTimer:
         end_time = time.perf_counter()
         full_name = self._full_name
         with self._lock:
-            self.timings[full_name]["elapsed_time"] += end_time - self.timings[full_name]["start_time"]
+            entry = self.timings.get(full_name)
+            # The entry is gone if the registry was cleared while this section was running;
+            # dropping the sample is preferable to raising out of a ``with`` block.
+            if entry is not None:
+                entry["elapsed_time"] += end_time - entry["start_time"]
         self._remove_context(name)
 
     def _add_context(self, name: str, category: str) -> None:
-        if self._categories and (self._categories[-1], category) in self.forbidden_nesting:
-            msg = f"Category '{category}' is not allowed inside category '{self._categories[-1]}'."
+        stack = _ACTIVE_CONTEXT.get()
+        if stack and (stack[-1][1], category) in self.forbidden_nesting:
+            msg = f"Category '{category}' is not allowed inside category '{stack[-1][1]}'."
             raise ValueError(msg)
-        self._context.append(name)
-        self._categories.append(category)
+        _ = _ACTIVE_CONTEXT.set((*stack, (name, category)))
 
     def _remove_context(self, name: str) -> None:
         """Pop the innermost context, restoring the stack to its state before ``name`` was entered."""
-        context = self._context
-        if not context:
+        stack = _ACTIVE_CONTEXT.get()
+        if not stack:
             return
-        # Pop through the matching frame so a mismatched or out-of-order exit cannot corrupt the stack.
-        while context:
-            popped = context.pop()
-            del self._categories[-1]
-            if popped == name:
-                break
+        # Cut back through the matching frame so a mismatched or out-of-order exit cannot corrupt the stack.
+        for index in range(len(stack) - 1, -1, -1):
+            if stack[index][0] == name:
+                _ = _ACTIVE_CONTEXT.set(stack[:index])
+                return
+        _ = _ACTIVE_CONTEXT.set(stack[:-1])
 
     def compute_flattened_timings(self) -> dict[tuple[str, ...], _TimesDict]:
         """Aggregate elapsed times with counter suffixes removed from section names.
@@ -136,56 +162,70 @@ class _ExecutionTimer:
         When counter variants of one section are merged, elapsed times are summed and the
         most recently recorded category is kept.
         """
-        flat_map: dict[tuple[str, ...], _TimesDict] = {}
-        for key, info in self.timings.items():
-            flat_key = tuple(_basic_name_without_counter(part) for part in key)
-            if flat_key in flat_map:
-                existing = flat_map[flat_key]
-                existing["elapsed_time"] += info["elapsed_time"]
-                existing["category"] = info["category"]
-            else:
-                flat_map[flat_key] = info.copy()
-        return flat_map
+        return _flatten(self._snapshot())
+
+    def _resolve(self, *, flatten: bool) -> dict[tuple[str, ...], _TimesDict]:
+        snapshot = self._snapshot()
+        return _flatten(snapshot) if flatten else snapshot
 
     def report_timings(self, *, flatten: bool = True) -> str:
         """Build a report of all sections with duration and percentage of total time."""
-        timings = self.compute_flattened_timings() if flatten else self.timings
-
-        total_time = self.compute_total_time(flatten=flatten)
-        if not total_time:
-            logging.warning("No timings to report.")
+        timings = self._resolve(flatten=flatten)
+        if not timings:
+            _LOGGER.warning("No timings to report.")
             return ""
 
+        total_time = sum(info["elapsed_time"] for key, info in timings.items() if len(key) == 1)
         report = [f"\nTotal calculation time: {total_time:.4f} s.\n"]
-        for key, info in timings.items():
-            elapsed_time = info["elapsed_time"]
-            percentage = (elapsed_time / total_time) * 100
+        for key in _ordered_by_hierarchy(timings):
+            elapsed_time = timings[key]["elapsed_time"]
+            percentage = (elapsed_time / total_time) * 100 if total_time else 0.0
             report.append(f"{'..  ' * (len(key) - 1)}{key[-1]}: {elapsed_time:.4f} s ({percentage:.2f}%)")
         return "\n".join(report)
 
     def compute_total_time(self, *, flatten: bool = True) -> float:
         """Compute total elapsed time across all top-level sections."""
-        timings = self.compute_flattened_timings() if flatten else self.timings
+        timings = self._resolve(flatten=flatten)
         return sum(info["elapsed_time"] for key, info in timings.items() if len(key) == 1)
 
     def compute_total_category_time(self, category: str) -> float:
         """Compute total elapsed time in a category, counting only top-most entries of that category."""
+        timings = self._snapshot()
         total_time = 0.0
-        for key, info in self.timings.items():
-            if info["category"] != category or self._has_ancestor_with_category(key, category):
+        for key, info in timings.items():
+            if info["category"] != category or _has_ancestor_with_category(timings, key, category):
                 continue
             total_time += info["elapsed_time"]
         return total_time
 
-    def _has_ancestor_with_category(self, key: tuple[str, ...], category: str) -> bool:
-        return any(
-            key[:i] in self.timings and self.timings[key[:i]]["category"] == category for i in range(1, len(key))
-        )
-
     def get_execution_timings(self, *, flatten: bool = True) -> dict[tuple[str, ...], TimingReport]:
         """Return elapsed seconds and category for every recorded section."""
-        timings = self.compute_flattened_timings() if flatten else self.timings
+        timings = self._resolve(flatten=flatten)
         return {key: {"time": info["elapsed_time"], "category": info["category"]} for key, info in timings.items()}
+
+    def clear(self) -> None:
+        """Drop every recorded section."""
+        with self._lock:
+            self.timings.clear()
+
+
+def _flatten(timings: dict[tuple[str, ...], _TimesDict]) -> dict[tuple[str, ...], _TimesDict]:
+    flat_map: dict[tuple[str, ...], _TimesDict] = {}
+    for key, info in timings.items():
+        flat_key = tuple(_basic_name_without_counter(part) for part in key)
+        existing = flat_map.get(flat_key)
+        if existing is None:
+            flat_map[flat_key] = info.copy()
+        else:
+            existing["elapsed_time"] += info["elapsed_time"]
+            existing["category"] = info["category"]
+    return flat_map
+
+
+def _has_ancestor_with_category(
+    timings: dict[tuple[str, ...], _TimesDict], key: tuple[str, ...], category: str
+) -> bool:
+    return any(key[:i] in timings and timings[key[:i]]["category"] == category for i in range(1, len(key)))
 
 
 class TimerContext:
@@ -196,8 +236,9 @@ class TimerContext:
         self.category: str = category
         self.timer: _ExecutionTimer = _ExecutionTimer()
 
-    def __enter__(self) -> None:
+    def __enter__(self) -> TimerContext:
         self.timer.start_timer(self.name, self.category)
+        return self
 
     def __exit__(
         self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: TracebackType | None
@@ -205,7 +246,16 @@ class TimerContext:
         self.timer.stop_timer(self.name)
 
     def __call__(self, func: Callable[P, R]) -> Callable[P, R]:
-        """Decorate a function to time its execution under this context."""
+        """Decorate a function to time its execution under this context.
+
+        Coroutine functions are wrapped so the timing spans the entire ``await``, not just
+        creation of the coroutine object.
+        """
+        if inspect.iscoroutinefunction(func):
+            # ``iscoroutinefunction`` narrows nothing useful for the type checker, so bridge
+            # through an explicitly typed helper instead of leaking ``Any`` into the signature.
+            async_func = cast("Callable[P, Coroutine[object, object, object]]", func)
+            return cast("Callable[P, R]", self._wrap_async(async_func))
 
         @functools.wraps(func)
         def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
@@ -213,6 +263,16 @@ class TimerContext:
                 return func(*args, **kwargs)
 
         return wrapper
+
+    def _wrap_async(self, func: Callable[P, Coroutine[object, object, T]]) -> Callable[P, Coroutine[object, object, T]]:
+        """Wrap a coroutine function so the timing spans the whole await."""
+
+        @functools.wraps(func)
+        async def async_wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
+            with TimerContext(self.name, self.category):
+                return await func(*args, **kwargs)
+
+        return async_wrapper
 
 
 def _build_name_with_counter(name: str, counter: int | None = None) -> str:
@@ -236,7 +296,7 @@ def get_execution_times_report(*, flatten: bool = True) -> str:
 
 def log_execution_times(*, flatten: bool = True, logger: logging.Logger | None = None) -> None:
     """Log the execution-times report at INFO level; flatten counters if requested."""
-    (logger or logging.getLogger(__name__)).info(get_execution_times_report(flatten=flatten))
+    (logger or _LOGGER).info(get_execution_times_report(flatten=flatten))
 
 
 def get_execution_timings(*, flatten: bool = True) -> dict[tuple[str, ...], TimingReport]:
@@ -249,8 +309,13 @@ def _build_payload(*, flatten: bool = True) -> TimingsPayload:
     timer = _ExecutionTimer()
     timings = timer.get_execution_timings(flatten=flatten)
     sections: list[SectionRecord] = [
-        {"name": key[-1], "path": list(key), "time": round(info["time"], 6), "category": info["category"]}
-        for key, info in timings.items()
+        {
+            "name": key[-1],
+            "path": list(key),
+            "time": round(timings[key]["time"], 6),
+            "category": timings[key]["category"],
+        }
+        for key in _ordered_by_hierarchy(timings)
     ]
     categories = sorted({info["category"] for info in timings.values()})
     return {
@@ -284,7 +349,7 @@ def get_total_category_time(category: str) -> float:
 
 def clear_execution_timings() -> None:
     """Reset all recorded timings."""
-    _ExecutionTimer.timings = {}
+    _ExecutionTimer().clear()
 
 
 def register_forbidden_nesting(outer: str, inner: str) -> None:
