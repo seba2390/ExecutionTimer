@@ -1,5 +1,7 @@
 """Tests for the execution timer, using only the public API."""
 
+import asyncio
+import inspect
 import json
 import logging
 import time
@@ -531,3 +533,156 @@ class TestThreading:
         # No cross-thread nesting.
         assert ("t0", "c1") not in timings
         assert ("t1", "c0") not in timings
+
+
+class TestAsyncDecorator:
+    def test_async_decorator_times_the_await_not_coroutine_creation(self) -> None:
+        @TimerContext("async_work")
+        async def work() -> None:
+            await asyncio.sleep(0.05)
+
+        asyncio.run(work())
+
+        assert raw_timings()["async_work",]["time"] >= 0.04
+
+    def test_async_decorator_preserves_return_value(self) -> None:
+        @TimerContext("async_compute")
+        async def compute() -> int:
+            await asyncio.sleep(0)
+            return 42
+
+        assert asyncio.run(compute()) == 42
+
+    def test_async_decorator_preserves_function_metadata(self) -> None:
+        @TimerContext("decorated")
+        async def my_coro() -> None:
+            """My async docstring."""
+
+        assert my_coro.__name__ == "my_coro"
+        assert my_coro.__doc__ == "My async docstring."
+        assert inspect.iscoroutinefunction(my_coro)
+
+    def test_async_decorator_propagates_exception_and_records_timing(self) -> None:
+        @TimerContext("async_failing")
+        async def failing() -> None:
+            await asyncio.sleep(0)
+            raise ValueError("bad")
+
+        with pytest.raises(ValueError):
+            asyncio.run(failing())
+
+        assert ("async_failing",) in raw_timings()
+
+    def test_async_decorator_with_category(self) -> None:
+        @TimerContext("gpu_work", category="gpu")
+        async def gpu_work() -> None:
+            await asyncio.sleep(0)
+
+        asyncio.run(gpu_work())
+        assert raw_timings()["gpu_work",]["category"] == "gpu"
+
+    def test_concurrent_tasks_nest_independently(self) -> None:
+        """Each asyncio task gets its own context stack, so gathered tasks do not cross-nest."""
+
+        @TimerContext("child")
+        async def child() -> None:
+            await asyncio.sleep(0.01)
+
+        async def parent(index: int) -> None:
+            with TimerContext(f"task{index}"):
+                await child()
+
+        async def main() -> None:
+            _ = await asyncio.gather(parent(0), parent(1))
+
+        asyncio.run(main())
+
+        timings = raw_timings()
+        assert ("task0", "child") in timings
+        assert ("task1", "child") in timings
+        # No cross-task nesting or leakage to the top level.
+        assert ("task0", "task1") not in timings
+        assert ("child",) not in timings
+
+
+class TestContextManagerProtocol:
+    def test_enter_returns_the_context(self) -> None:
+        with TimerContext("named", category="gpu", counter=2) as ctx:
+            assert isinstance(ctx, TimerContext)
+            assert ctx.name == "named[2]"
+            assert ctx.category == "gpu"
+
+
+class TestReportOrdering:
+    def test_children_follow_their_parent_after_revisit(self) -> None:
+        """A parent re-entered after an unrelated sibling still renders its own children."""
+        with TimerContext("a"), TimerContext("b"):
+            pass
+        with TimerContext("x"):
+            pass
+        with TimerContext("a"), TimerContext("c"):
+            pass
+
+        lines = [line for line in get_execution_times_report(flatten=False).splitlines() if ":" in line]
+        names = [line.split(":")[0] for line in lines if not line.startswith("Total")]
+
+        assert names == ["a", "..  b", "..  c", "x"]
+
+    def test_report_renders_when_all_elapsed_times_are_zero(self) -> None:
+        with patch.object(time, "perf_counter", side_effect=[0.0, 0.0]), TimerContext("instant"):
+            pass
+
+        report = get_execution_times_report()
+        assert "instant: 0.0000 s (0.00%)" in report
+
+
+class TestRobustness:
+    def test_clear_during_active_section_does_not_raise(self) -> None:
+        """Clearing mid-section drops the sample rather than raising out of the ``with`` block."""
+        with TimerContext("live"):
+            clear_execution_timings()
+
+        assert raw_timings() == {}
+
+        # The context stack is still usable afterwards.
+        with TimerContext("after"):
+            pass
+        assert list(raw_timings()) == [("after",)]
+
+    def test_reading_reports_while_another_thread_records(self) -> None:
+        """Readers snapshot under the lock, so concurrent recording cannot break iteration."""
+        import threading
+
+        stop = threading.Event()
+        errors: list[BaseException] = []
+
+        def writer() -> None:
+            index = 0
+            while not stop.is_set():
+                with TimerContext(f"s{index % 20}"):
+                    pass
+                index += 1
+
+        thread = threading.Thread(target=writer)
+        thread.start()
+        try:
+            for _ in range(200):
+                try:
+                    _ = get_execution_times_report()
+                    _ = get_execution_times_json()
+                    _ = get_total_category_time(DEFAULT_CATEGORY)
+                    _ = get_total_time()
+                except BaseException as exc:  # pragma: no cover - only on regression
+                    errors.append(exc)
+                    break
+        finally:
+            stop.set()
+            thread.join()
+
+        assert errors == []
+
+    def test_logging_uses_the_package_logger_not_the_root_logger(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.WARNING):
+            assert get_execution_times_report() == ""
+
+        assert [record.name for record in caplog.records] == ["execution_timer._timer"]

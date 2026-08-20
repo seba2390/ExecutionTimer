@@ -1,33 +1,58 @@
 [project]
 name = "execution-timer"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Hierarchical execution timing with user-defined categories."
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.14"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
 authors = [{ name = "Sebastian Yde Madsen" }]
-keywords = ["timing", "profiling", "benchmark", "execution-time"]
+keywords = [
+    "timing",
+    "profiling",
+    "benchmark",
+    "execution-time",
+    "performance",
+    "instrumentation",
+    "context-manager",
+    "decorator",
+]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Implementation :: CPython",
     "Topic :: Software Development",
+    "Topic :: Software Development :: Testing",
+    "Topic :: System :: Benchmark",
     "Typing :: Typed",
 ]
 dependencies = []
 
 [project.urls]
+Homepage = "https://github.com/seba2390/ExecutionTimer"
+Documentation = "https://github.com/seba2390/ExecutionTimer#readme"
 Repository = "https://github.com/seba2390/ExecutionTimer"
 Issues = "https://github.com/seba2390/ExecutionTimer/issues"
+Changelog = "https://github.com/seba2390/ExecutionTimer/blob/main/CHANGELOG.md"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.version]
+path = "src/execution_timer/__init__.py"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/execution_timer"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/src", "/tests", "/README.md", "/LICENSE", "/CHANGELOG.md", "/pyproject.toml"]
 
 [dependency-groups]
 dev = [
@@ -39,6 +64,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--strict-markers --strict-config"
 
 [tool.coverage.run]
 source = ["src/execution_timer"]
@@ -46,10 +72,11 @@ branch = true
 
 [tool.coverage.report]
 show_missing = true
+fail_under = 95
 exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError"]
 
 [tool.ruff]
-target-version = "py314"
+target-version = "py312"
 line-length = 120
 src = ["src", "tests"]
 
@@ -67,4 +94,5 @@ select = [
 
 [tool.basedpyright]
 typeCheckingMode = "recommended"
+pythonVersion = "3.12"
 include = ["src", "tests"]
