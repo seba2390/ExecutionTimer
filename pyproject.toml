@@ -1,5 +1,5 @@
 [project]
-name = "execution-timer"
+name = "executiontimer"
 dynamic = ["version"]
 description = "Hierarchical execution timing with user-defined categories."
 readme = "README.md"

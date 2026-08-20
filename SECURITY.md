@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Only the latest released version of `execution-timer` receives fixes.
+Only the latest released version of `executiontimer` receives fixes.
 
 ## Reporting a vulnerability
 
