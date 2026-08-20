@@ -543,7 +543,11 @@ class TestAsyncDecorator:
 
         asyncio.run(work())
 
-        assert raw_timings()["async_work",]["time"] >= 0.04
+        # Timing only the coroutine object's creation records ~1e-06 s, so any threshold
+        # orders of magnitude above that proves the await was covered. Kept well below the
+        # sleep duration because Windows' ~15.6 ms timer granularity lets short sleeps
+        # return early -- a threshold near 0.05 makes this test flaky rather than stricter.
+        assert raw_timings()["async_work",]["time"] >= 0.01
 
     def test_async_decorator_preserves_return_value(self) -> None:
         @TimerContext("async_compute")
