@@ -2,13 +2,13 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/seba2390/ExecutionTimer/main/assets/logo-dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/seba2390/ExecutionTimer/main/assets/logo-light.svg">
-    <img src="https://raw.githubusercontent.com/seba2390/ExecutionTimer/main/assets/logo-light.svg" alt="execution-timer" width="520">
+    <img src="https://raw.githubusercontent.com/seba2390/ExecutionTimer/main/assets/logo-light.svg" alt="executiontimer" width="520">
   </picture>
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/execution-timer/"><img src="https://img.shields.io/pypi/v/execution-timer?color=blue" alt="PyPI version"></a>
-  <a href="https://pypi.org/project/execution-timer/"><img src="https://img.shields.io/pypi/pyversions/execution-timer" alt="Python versions"></a>
+  <a href="https://pypi.org/project/executiontimer/"><img src="https://img.shields.io/pypi/v/executiontimer?color=blue" alt="PyPI version"></a>
+  <a href="https://pypi.org/project/executiontimer/"><img src="https://img.shields.io/pypi/pyversions/executiontimer" alt="Python versions"></a>
   <a href="https://github.com/seba2390/ExecutionTimer/actions/workflows/ci.yml"><img src="https://github.com/seba2390/ExecutionTimer/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/seba2390/ExecutionTimer/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License"></a>
   <img src="https://img.shields.io/badge/types-py.typed-blue" alt="Typed">
@@ -35,14 +35,20 @@ Zero dependencies. Fully type annotated. Works with threads and `asyncio`.
 ## Installation
 
 ```bash
-pip install execution-timer
+pip install executiontimer
 ```
 
 ```bash
-uv add execution-timer
+uv add executiontimer
 ```
 
 Requires Python 3.12+.
+
+> **Note** — the install name is `executiontimer`, the import name is `execution_timer`:
+>
+> ```python
+> from execution_timer import TimerContext
+> ```
 
 ## Quick start
 
