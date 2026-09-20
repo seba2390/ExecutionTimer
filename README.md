@@ -116,6 +116,10 @@ get_execution_timings(flatten=True)  # {("step",): {"time": 0.158, ...}}
 get_execution_timings(flatten=False)  # {("step[0]",): ..., ("step[1]",): ..., ...}
 ```
 
+Flattening removes the final integer suffix (including negative counters). Other
+bracketed names such as `array[index]` are preserved. If merged entries have different
+categories, the category from the most recently entered section is used.
+
 ### Categories
 
 Categories are plain strings — use whatever fits your domain:
@@ -131,6 +135,10 @@ get_total_category_time("gpu")
 
 `get_total_category_time` counts only the *top-most* section of a category, so a `gpu`
 section nested inside another `gpu` section is not double-counted.
+
+Repeated calls to the same path accumulate time. If its category changes, the latest
+category applies to that path's entire accumulated time. Use consistent categories per
+path when you need separate category totals.
 
 You can also forbid a category from appearing inside another, which raises a `ValueError`
 as soon as the invalid nesting happens:
@@ -169,6 +177,9 @@ save_execution_timings_json("timings.json")
 }
 ```
 
+Sections and totals come from one snapshot. Category totals use the original paths,
+even when flattening merges sections with different categories.
+
 ### Concurrency
 
 The recorded timings live in one process-wide registry guarded by a lock. The *active
@@ -184,9 +195,38 @@ async def worker(n: int) -> None:
 await asyncio.gather(worker(0), worker(1))
 ```
 
-Recording the *same* section path from overlapping threads or tasks is not meaningful —
-the elapsed times would overlap and sum to more than the wall-clock duration. Give
-concurrent sections distinct names (or use `counter=`).
+Overlapping calls to the same section path are supported: each call keeps its own start
+time, and their durations are added together. These totals measure accumulated elapsed
+time and can exceed wall-clock duration. Use distinct names (or `counter=`) to report
+concurrent calls separately.
+
+New asyncio tasks inherit the timing context in which they are created. Their sections
+nest under that parent; changes to each task's active stack remain independent. Await
+child tasks inside the parent section if you want the parent duration to include them.
+
+### Reusing contexts and clearing timings
+
+A `TimerContext` can be reused, nested within itself, or shared by concurrent calls.
+For a tight loop, reuse a context to avoid constructing one on every iteration:
+
+```python
+step_timer = TimerContext("step")
+for item in items:
+    with step_timer:
+        process(item)
+```
+
+Timings accumulate until `clear_execution_timings()` is called. Clearing also discards
+samples from sections that were already active, without disturbing their nesting stack.
+Sections started after the clear are recorded normally. Reports include completed calls;
+an active section's current duration is added only when it exits.
+
+### Measuring overhead
+
+Run the repeatable benchmark with `uv run python benchmarks/overhead.py`. It measures
+fresh and reused contexts, sync and async decorators, nesting, and reporting. Compare
+results using the same interpreter and machine; see [benchmarks/README.md](benchmarks/README.md).
+`log_execution_times()` skips building a report when its logger has `INFO` disabled.
 
 ## API
 

@@ -1,11 +1,15 @@
 """Tests for the execution timer, using only the public API."""
 
 import asyncio
+import builtins
 import inspect
 import json
 import logging
+import threading
 import time
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 from pathlib import Path
 from typing import cast
 from unittest.mock import patch
@@ -690,3 +694,301 @@ class TestRobustness:
             assert get_execution_times_report() == ""
 
         assert [record.name for record in caplog.records] == ["execution_timer._timer"]
+
+
+class TestRegressions:
+    @pytest.mark.parametrize("clear_between_calls", [False, True])
+    def test_overlapping_tasks_keep_independent_start_times(self, clear_between_calls: bool) -> None:
+        now = 0.0
+        shared = TimerContext("shared")
+
+        async def main() -> None:
+            nonlocal now
+            started = [asyncio.Event(), asyncio.Event()]
+            release = [asyncio.Event(), asyncio.Event()]
+
+            async def worker(index: int) -> None:
+                with shared:
+                    started[index].set()
+                    _ = await release[index].wait()
+
+            first = asyncio.create_task(worker(0))
+            _ = await started[0].wait()
+            if clear_between_calls:
+                clear_execution_timings()
+            now = 2.0
+            second = asyncio.create_task(worker(1))
+            _ = await started[1].wait()
+            now = 5.0
+            release[0].set()
+            await first
+            now = 9.0
+            release[1].set()
+            await second
+
+        with patch.object(time, "perf_counter", side_effect=lambda: now):
+            asyncio.run(main())
+
+        assert raw_timings() == {("shared",): {"time": 7.0 if clear_between_calls else 12.0, "category": "default"}}
+
+    def test_overlapping_thread_decorator_calls_accumulate_each_duration(self) -> None:
+        now = 0.0
+        started = [threading.Event(), threading.Event()]
+        release = [threading.Event(), threading.Event()]
+
+        @TimerContext("shared")
+        def worker(index: int) -> None:
+            started[index].set()
+            assert release[index].wait(timeout=5)
+
+        with patch.object(time, "perf_counter", side_effect=lambda: now), ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(worker, 0)
+            try:
+                assert started[0].wait(timeout=5)
+                now = 2.0
+                second = pool.submit(worker, 1)
+                assert started[1].wait(timeout=5)
+                now = 5.0
+                release[0].set()
+                first.result(timeout=5)
+                now = 9.0
+                release[1].set()
+                second.result(timeout=5)
+            finally:
+                for event in release:
+                    event.set()
+
+        assert raw_timings()["shared",]["time"] == 12.0
+
+    def test_flatten_category_follows_latest_revisit_even_with_equal_clock_readings(self) -> None:
+        with patch.object(time, "perf_counter", return_value=0.0):
+            for counter, category in [(0, "gpu"), (1, "cpu"), (0, "io")]:
+                with TimerContext("step", counter=counter, category=category):
+                    pass
+
+        assert get_execution_timings()["step",]["category"] == "io"
+
+    @pytest.mark.parametrize("name", ["array[index]", "empty[]", "label[+1]", "label[1.5]", "label[\uff11\uff12]"])
+    def test_flatten_preserves_non_counter_brackets(self, name: str) -> None:
+        with TimerContext(name):
+            pass
+        assert list(get_execution_timings()) == [(name,)]
+
+    @pytest.mark.parametrize("counter", [-12, 0, 12])
+    def test_signed_counters_flatten_only_the_last_suffix(self, counter: int) -> None:
+        with TimerContext("array[index]", counter=counter):
+            pass
+        assert list(get_execution_timings()) == [("array[index]",)]
+
+    @pytest.mark.parametrize("flatten", [False, True])
+    def test_json_keeps_categories_hidden_by_flattening(self, flatten: bool) -> None:
+        with patch.object(time, "perf_counter", side_effect=[0, 2, 3, 6]):
+            with TimerContext("step", counter=0, category="gpu"):
+                pass
+            with TimerContext("step", counter=1, category="cpu"):
+                pass
+
+        payload = cast(TimingsPayload, json.loads(get_execution_times_json(flatten=flatten)))
+        assert payload["total_category_time"] == {"gpu": 2.0, "cpu": 3.0}
+        assert payload["total_time"] == 5.0
+
+    @pytest.mark.parametrize("flatten", [False, True])
+    def test_json_uses_one_snapshot_for_sections_and_totals(self, flatten: bool) -> None:
+        with patch.object(time, "perf_counter", side_effect=[0, 2]), TimerContext("section", category="cpu"):
+            pass
+
+        original_round = round
+
+        def clear_while_formatting(value: float, digits: int) -> float:
+            # Deterministically simulate another thread clearing the registry after the
+            # sections were read but before totals are formatted, through the public API.
+            clear_execution_timings()
+            return original_round(value, digits)
+
+        with patch.object(builtins, "round", side_effect=clear_while_formatting):
+            payload = cast(TimingsPayload, json.loads(get_execution_times_json(flatten=flatten)))
+
+        assert payload["sections"] == [{"name": "section", "path": ["section"], "time": 2.0, "category": "cpu"}]
+        assert payload["total_time"] == 2.0
+        assert payload["total_category_time"] == {"cpu": 2.0}
+
+    def test_disabled_logging_does_not_warn_about_empty_report(self, caplog: pytest.LogCaptureFixture) -> None:
+        logger = logging.getLogger("executiontimer.test.disabled")
+        with caplog.at_level(logging.WARNING), patch.object(logger, "isEnabledFor", return_value=False):
+            log_execution_times(logger=logger)
+        assert caplog.records == []
+
+
+class TestLifecycle:
+    def test_reusing_one_context_accumulates_exact_durations(self) -> None:
+        context = TimerContext("reused")
+        with patch.object(time, "perf_counter", side_effect=[0, 2, 5, 8]):
+            with context:
+                pass
+            with context:
+                pass
+        assert raw_timings()["reused",]["time"] == 5.0
+
+    def test_one_context_can_be_reentered(self) -> None:
+        context = TimerContext("recursive")
+        with patch.object(time, "perf_counter", side_effect=[0, 1, 3, 7]), context, context:
+            pass
+        assert raw_timings() == {
+            ("recursive",): {"time": 7.0, "category": "default"},
+            ("recursive", "recursive"): {"time": 2.0, "category": "default"},
+        }
+
+    def test_recursive_decorator_preserves_arguments_and_hierarchy(self) -> None:
+        @TimerContext("recursive", category="cpu", counter=0)
+        def recurse(depth: int, *, value: int) -> int:
+            return recurse(depth - 1, value=value + 1) if depth else value
+
+        with patch.object(time, "perf_counter", side_effect=range(6)):
+            assert recurse(2, value=40) == 42
+        assert [info["time"] for info in raw_timings().values()] == [5.0, 3.0, 1.0]
+        assert list(raw_timings()) == [("recursive[0]",) * depth for depth in range(1, 4)]
+
+    def test_failed_entry_leaves_parent_and_its_next_child_intact(self) -> None:
+        register_forbidden_nesting("gpu", "cpu")
+        with TimerContext("parent", category="gpu"):
+            with pytest.raises(ValueError), TimerContext("forbidden", category="cpu"):
+                pytest.fail("A forbidden section must not be entered")
+            with TimerContext("allowed", category="io"):
+                pass
+        with TimerContext("after"):
+            pass
+        assert list(raw_timings()) == [("parent",), ("parent", "allowed"), ("after",)]
+
+    def test_nesting_rules_only_apply_to_the_direct_parent(self) -> None:
+        register_forbidden_nesting("gpu", "cpu")
+        with (
+            TimerContext("gpu", category="gpu"),
+            TimerContext("io", category="io"),
+            TimerContext("cpu", category="cpu"),
+        ):
+            pass
+        assert ("gpu", "io", "cpu") in raw_timings()
+
+    def test_out_of_order_exit_raises_without_changing_the_active_section(self) -> None:
+        outer = TimerContext("outer")
+        inner = TimerContext("inner")
+        with (
+            patch.object(time, "perf_counter", side_effect=[0, 1, 2, 3, 4]),
+            outer,
+            inner,
+            pytest.raises(RuntimeError, match="Cannot stop 'outer' while 'inner' is active"),
+        ):
+            outer.__exit__(None, None, None)
+        assert raw_timings()["outer",]["time"] == 4.0
+        assert raw_timings()["outer", "inner"]["time"] == 2.0
+
+    def test_exit_without_an_active_section_is_a_noop(self) -> None:
+        TimerContext("unused").__exit__(None, None, None)
+        assert raw_timings() == {}
+
+    def test_reports_preserve_orphaned_children_after_clear(self) -> None:
+        with patch.object(time, "perf_counter", side_effect=[0, 1, 3, 5]), TimerContext("parent"):
+            clear_execution_timings()
+            with TimerContext("child", category="cpu"):
+                pass
+        assert list(raw_timings()) == [("parent", "child")]
+        assert "child: 2.0000 s (0.00%)" in get_execution_times_report()
+        payload = cast(TimingsPayload, json.loads(get_execution_times_json()))
+        assert payload["total_time"] == 0.0
+        assert payload["total_category_time"] == {"cpu": 2.0}
+        assert payload["sections"][0]["path"] == ["parent", "child"]
+
+    def test_deep_reports_do_not_depend_on_python_recursion_limit(self) -> None:
+        with ExitStack() as stack:
+            for _ in range(1_100):
+                _ = stack.enter_context(TimerContext("level"))
+        assert len(get_execution_times_report(flatten=False).splitlines()) == 1_103
+
+    def test_async_cancellation_records_time_and_restores_parent(self) -> None:
+        @TimerContext("cancelled")
+        async def work(*, value: int) -> int:
+            assert value == 42
+            await asyncio.sleep(0)
+            raise asyncio.CancelledError
+
+        async def main() -> None:
+            with TimerContext("parent"):
+                with pytest.raises(asyncio.CancelledError):
+                    _ = await work(value=42)
+                with TimerContext("after"):
+                    pass
+
+        with patch.object(time, "perf_counter", side_effect=range(6)):
+            asyncio.run(main())
+        assert raw_timings()["parent", "cancelled"]["time"] == 1.0
+        assert list(raw_timings()) == [("parent",), ("parent", "cancelled"), ("parent", "after")]
+
+    def test_child_tasks_inherit_the_parent_without_modifying_its_context(self) -> None:
+        @TimerContext("child")
+        async def child(value: int, *, increment: int) -> int:
+            await asyncio.sleep(0)
+            return value + increment
+
+        async def main() -> None:
+            with TimerContext("parent"):
+                assert await asyncio.gather(child(1, increment=1), child(2, increment=1)) == [2, 3]
+                with TimerContext("after"):
+                    pass
+
+        asyncio.run(main())
+        assert list(raw_timings()) == [("parent",), ("parent", "child"), ("parent", "after")]
+
+
+class TestSnapshotSemantics:
+    @pytest.mark.parametrize("flatten", [False, True])
+    def test_mutating_a_returned_report_does_not_change_the_registry(self, flatten: bool) -> None:
+        with patch.object(time, "perf_counter", side_effect=[0, 2]), TimerContext("section"):
+            pass
+        report = get_execution_timings(flatten=flatten)
+        report["section",]["time"] = -1
+        report["section",]["category"] = "changed"
+        report.clear()
+        assert raw_timings() == {("section",): {"time": 2.0, "category": "default"}}
+
+    @pytest.mark.parametrize("flatten", [False, True])
+    def test_json_category_totals_exclude_matching_ancestors_across_other_categories(self, flatten: bool) -> None:
+        with (
+            patch.object(time, "perf_counter", side_effect=range(6)),
+            TimerContext("outer", category="cpu", counter=1),
+            TimerContext("middle", category="io"),
+            TimerContext("inner", category="cpu"),
+        ):
+            pass
+        payload = cast(TimingsPayload, json.loads(get_execution_times_json(flatten=flatten)))
+        assert payload["total_category_time"] == {"cpu": 5.0, "io": 3.0}
+        assert get_total_category_time("cpu") == 5.0
+        assert get_total_time(flatten=flatten) == 5.0
+
+    def test_empty_json(self) -> None:
+        assert json.loads(get_execution_times_json(indent=None)) == {
+            "total_time": 0.0,
+            "total_category_time": {},
+            "sections": [],
+        }
+
+    def test_unicode_json_file_round_trip(self, tmp_path: Path) -> None:
+        with TimerContext("计算", category="数据"):
+            pass
+        out = tmp_path / "timings.json"
+        assert save_execution_timings_json(str(out), indent=None) == out
+        text = out.read_text(encoding="utf-8")
+        assert text.endswith("\n")
+        assert len(text.splitlines()) == 1
+        payload = cast(TimingsPayload, json.loads(text))
+        assert payload["sections"][0]["name"] == "计算"
+        assert payload["sections"][0]["category"] == "数据"
+
+    def test_custom_logger_receives_the_requested_report(self, caplog: pytest.LogCaptureFixture) -> None:
+        with TimerContext("section", counter=0):
+            pass
+        logger = logging.getLogger("executiontimer.test.custom")
+        with caplog.at_level(logging.INFO, logger=logger.name):
+            log_execution_times(flatten=False, logger=logger)
+        assert [(record.name, record.message) for record in caplog.records] == [
+            (logger.name, get_execution_times_report(flatten=False))
+        ]

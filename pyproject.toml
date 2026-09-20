@@ -52,7 +52,16 @@ path = "src/execution_timer/__init__.py"
 packages = ["src/execution_timer"]
 
 [tool.hatch.build.targets.sdist]
-include = ["/src", "/tests", "/README.md", "/LICENSE", "/CHANGELOG.md", "/pyproject.toml"]
+include = [
+    "/src",
+    "/tests",
+    "/benchmarks",
+    "/README.md",
+    "/LICENSE",
+    "/CHANGELOG.md",
+    "/CONTRIBUTING.md",
+    "/pyproject.toml",
+]
 
 [dependency-groups]
 dev = [
