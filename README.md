@@ -20,7 +20,8 @@ end.
 
 Zero dependencies. Fully typed. Works with threads and `asyncio`.
 
-**Documentation: [seba2390.github.io/ExecutionTimer](https://seba2390.github.io/ExecutionTimer/)**
+## Documentation 
+[seba2390.github.io/ExecutionTimer](https://seba2390.github.io/ExecutionTimer/)
 
 ## Installation
 
