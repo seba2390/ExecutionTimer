@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Three changes below are breaking. They clean up the public API ahead of a stable 1.0
+release.
+
+### Changed
+
+- **Breaking:** the report from `get_execution_times_report()` no longer starts with a
+  blank line, and its header reads `Total time:` rather than `Total calculation time:`.
+  `log_execution_times()` still starts the report on its own line.
+- **Breaking:** `TimerContext.timer` is now private (`_timer`). It exposed the internal
+  registry, which is not part of the public API.
+- `get_execution_times_report()` no longer logs a warning when there are no timings; it
+  returns `""`. `log_execution_times()` warns instead, on the logger it was given, so
+  building an empty report no longer prints to stderr when logging is not configured.
+
+### Removed
+
+- **Breaking:** the `flatten` parameter of `get_total_time()`, which had no effect.
+
+### Documentation
+
+- README links to the changelog, contributing guide, benchmarks and license are absolute,
+  so they work on PyPI.
+- Note that each `counter=` value is kept as a separate section until the timings are
+  cleared.
+
+### Fixed
+
+- Exiting a section while an inner one is still active, typically because a paused
+  generator holds a section open, no longer raises `RuntimeError`. The raise replaced any
+  exception already propagating from the timed block and left the active stack corrupted
+  for the rest of the thread. The timer now emits a `RuntimeWarning`, records the exited
+  section, and discards the unfinished inner sections. Exiting a section that is no longer
+  active does nothing, so closing the paused generator later no longer raises either.
+
+### Security
+
+- Workflows pin every action to a full commit SHA, with the release as a comment that
+  Dependabot keeps current, and CI installs dependencies with `uv sync --locked` so a
+  stale lockfile fails the build.
+
 ## [0.2.0] - 2026-09-30
 
 ### Changed

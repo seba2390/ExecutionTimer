@@ -14,6 +14,7 @@ import json
 import logging
 import threading
 import time
+import warnings
 from collections.abc import Callable, Coroutine, Iterable, Iterator
 from contextvars import ContextVar
 from itertools import count
@@ -134,13 +135,27 @@ class _ExecutionTimer:
         _ = _ACTIVE_CONTEXT.set(_Frame(full_name, category, time.perf_counter(), entry, parent))
 
     def stop_timer(self, name: str) -> None:
-        """Stop timing a section and accumulate its elapsed time."""
+        """Stop timing a section and accumulate its elapsed time.
+
+        Never raises: an exception here would replace one already propagating from the timed
+        block. Exiting past still-active inner sections (typically a suspended generator that
+        holds one open) discards them with a warning, so the stack cannot stay corrupted.
+        Exiting a section that is no longer active, such as one discarded that way when its
+        generator is finally closed, does nothing.
+        """
         end_time = time.perf_counter()
-        frame = _ACTIVE_CONTEXT.get()
+        active = _ACTIVE_CONTEXT.get()
+        frame = active
+        while frame is not None and frame.path[-1] != name:
+            frame = frame.parent
         if frame is None:
             return
-        if frame.path[-1] != name:
-            raise RuntimeError(f"Cannot stop '{name}' while '{frame.path[-1]}' is active.")
+        if frame is not active and active is not None:
+            msg = (
+                f"Section '{name}' exited while '{active.path[-1]}' was still active; discarding the "
+                "unfinished inner sections. Close sections before a generator yields."
+            )
+            warnings.warn(msg, RuntimeWarning, stacklevel=3)
         with self._lock:
             # A clear detaches this entry from the registry. Updating the detached object
             # cannot resurrect an old sample or add it to a replacement at the same path.
@@ -155,21 +170,19 @@ class _ExecutionTimer:
         """Build a report of all sections with duration and percentage of total time."""
         timings = self._resolve(flatten=flatten)
         if not timings:
-            _LOGGER.warning("No timings to report.")
             return ""
 
         total_time = sum(info["elapsed_time"] for key, info in timings.items() if len(key) == 1)
-        report = [f"\nTotal calculation time: {total_time:.4f} s.\n"]
+        report = [f"Total time: {total_time:.4f} s.\n"]
         for key in _ordered_by_hierarchy(timings):
             elapsed_time = timings[key]["elapsed_time"]
             percentage = (elapsed_time / total_time) * 100 if total_time else 0.0
             report.append(f"{'..  ' * (len(key) - 1)}{key[-1]}: {elapsed_time:.4f} s ({percentage:.2f}%)")
         return "\n".join(report)
 
-    def compute_total_time(self, *, flatten: bool = True) -> float:
+    def compute_total_time(self) -> float:
         """Compute total elapsed time across all top-level sections."""
-        # Counter merging cannot change the sum. Avoid allocating and flattening a snapshot.
-        _ = flatten
+        # Counter merging cannot change the sum, so there is no snapshot to copy or flatten.
         with self._lock:
             return sum((info["elapsed_time"] for key, info in self.timings.items() if len(key) == 1), 0.0)
 
@@ -232,16 +245,16 @@ class TimerContext:
     def __init__(self, name: str, category: str = DEFAULT_CATEGORY, counter: int | None = None) -> None:
         self.name: str = _build_name_with_counter(name, counter)
         self.category: str = category
-        self.timer: _ExecutionTimer = _TIMER
+        self._timer: _ExecutionTimer = _TIMER
 
     def __enter__(self) -> TimerContext:
-        self.timer.start_timer(self.name, self.category)
+        self._timer.start_timer(self.name, self.category)
         return self
 
     def __exit__(
         self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: TracebackType | None
     ) -> None:
-        self.timer.stop_timer(self.name)
+        self._timer.stop_timer(self.name)
 
     def __call__(self, func: Callable[P, R]) -> Callable[P, R]:
         """Decorate a function to time its execution under this context.
@@ -299,18 +312,20 @@ def _basic_name_without_counter(name: str) -> str:
 
 
 def get_execution_times_report(*, flatten: bool = True) -> str:
-    """Get a formatted report of all recorded sections; flatten counters if requested."""
+    """Get a formatted report of all recorded sections (``""`` if none); flatten counters if requested."""
     return _TIMER.report_timings(flatten=flatten)
 
 
 def log_execution_times(*, flatten: bool = True, logger: logging.Logger | None = None) -> None:
-    """Log the execution-times report at INFO level; flatten counters if requested."""
+    """Log the execution-times report at INFO level, or a warning if there is nothing to report."""
     target = logger if logger is not None else _LOGGER
     if target.isEnabledFor(logging.INFO):
         report = get_execution_times_report(flatten=flatten)
-        # An empty report has already been warned about; logging it would add a blank record.
         if report:
-            target.info(report)
+            # Start the multi-line report on its own line, after the log record's prefix.
+            target.info("\n%s", report)
+        else:
+            target.warning("No timings to report.")
 
 
 def get_execution_timings(*, flatten: bool = True) -> dict[tuple[str, ...], TimingReport]:
@@ -355,13 +370,9 @@ def save_execution_timings_json(path: str | Path, *, flatten: bool = True, inden
     return out
 
 
-def get_total_time(*, flatten: bool = True) -> float:
-    """Get total elapsed seconds across all top-level sections.
-
-    ``flatten`` has no effect, because merging counter variants cannot change the total. It is
-    accepted for symmetry with the other reporting functions.
-    """
-    return _TIMER.compute_total_time(flatten=flatten)
+def get_total_time() -> float:
+    """Get total elapsed seconds across all top-level sections."""
+    return _TIMER.compute_total_time()
 
 
 def get_total_category_time(category: str) -> float:

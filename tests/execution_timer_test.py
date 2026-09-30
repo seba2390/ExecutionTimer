@@ -7,7 +7,7 @@ import json
 import logging
 import threading
 import time
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Generator, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from pathlib import Path
@@ -191,15 +191,17 @@ class TestReporting:
 
         report = get_execution_times_report()
 
-        assert "Total calculation time" in report
+        assert report.startswith("Total time: ")
         assert "context_report:" in report
         assert "context_report_nested:" in report
         for i in range(3):
             assert f"..  context_sub_{i}:" in report
             assert f"..  ..  context_subsub_{i}:" in report
 
-    def test_report_empty_when_no_timings(self) -> None:
-        assert get_execution_times_report() == ""
+    def test_report_empty_when_no_timings(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.DEBUG):
+            assert get_execution_times_report() == ""
+        assert caplog.records == []
 
     def test_report_flatten_flag(self) -> None:
         with patch.object(time, "perf_counter", side_effect=[0, 1, 1, 2]):
@@ -271,7 +273,7 @@ class TestOutput:
         with caplog.at_level(logging.INFO):
             log_execution_times()
 
-        assert "Total calculation time" in caplog.text
+        assert "Total time: " in caplog.text
         assert "logged:" in caplog.text
 
     def test_get_execution_times_json_is_valid_and_structured(self) -> None:
@@ -381,7 +383,7 @@ class TestTimerContextDecorator:
         assert ("outer", "inner") in timings
 
     def test_decorating_a_generator_function_raises(self) -> None:
-        def numbers() -> Iterator[int]:
+        def numbers() -> Generator[int]:
             yield 1
 
         with pytest.raises(TypeError, match=r"Cannot decorate generator function '.*numbers'"):
@@ -716,8 +718,8 @@ class TestRobustness:
         assert errors == []
 
     def test_logging_uses_the_package_logger_not_the_root_logger(self, caplog: pytest.LogCaptureFixture) -> None:
-        with caplog.at_level(logging.WARNING):
-            assert get_execution_times_report() == ""
+        with caplog.at_level(logging.INFO):
+            log_execution_times()
 
         assert [record.name for record in caplog.records] == ["execution_timer._timer"]
 
@@ -903,18 +905,42 @@ class TestLifecycle:
             pass
         assert ("gpu", "io", "cpu") in raw_timings()
 
-    def test_out_of_order_exit_raises_without_changing_the_active_section(self) -> None:
+    def test_out_of_order_exit_unwinds_to_the_exited_section_and_warns(self) -> None:
         outer = TimerContext("outer")
         inner = TimerContext("inner")
-        with (
-            patch.object(time, "perf_counter", side_effect=[0, 1, 2, 3, 4]),
-            outer,
-            inner,
-            pytest.raises(RuntimeError, match="Cannot stop 'outer' while 'inner' is active"),
-        ):
-            outer.__exit__(None, None, None)
-        assert raw_timings()["outer",]["time"] == 4.0
-        assert raw_timings()["outer", "inner"]["time"] == 2.0
+        with patch.object(time, "perf_counter", side_effect=[0, 1, 3]):
+            _ = outer.__enter__()
+            _ = inner.__enter__()
+            with pytest.warns(RuntimeWarning, match="'outer' exited while 'inner' was still active"):
+                outer.__exit__(None, None, None)
+        with TimerContext("after"):
+            pass
+        assert raw_timings()["outer",]["time"] == 3.0
+        assert raw_timings()["outer", "inner"]["time"] == 0.0
+        assert ("after",) in raw_timings()
+
+    def test_abandoned_generator_section_does_not_break_the_caller(self) -> None:
+        def numbers() -> Generator[int]:
+            with TimerContext("generator"):
+                yield 1
+                yield 2
+
+        paused = numbers()
+        with pytest.warns(RuntimeWarning), pytest.raises(KeyError, match="from the body"), TimerContext("caller"):
+            _ = next(paused)
+            raise KeyError("from the body")
+        # Closing the generator later exits a section that is no longer active: a no-op.
+        paused.close()
+        with TimerContext("after"):
+            pass
+        assert list(raw_timings()) == [("caller",), ("caller", "generator"), ("after",)]
+
+    def test_exiting_a_section_that_is_not_active_leaves_the_stack_intact(self) -> None:
+        with TimerContext("outer"):
+            TimerContext("stranger").__exit__(None, None, None)
+            with TimerContext("inner"):
+                pass
+        assert list(raw_timings()) == [("outer",), ("outer", "inner")]
 
     def test_exit_without_an_active_section_is_a_noop(self) -> None:
         TimerContext("unused").__exit__(None, None, None)
@@ -936,7 +962,7 @@ class TestLifecycle:
         with ExitStack() as stack:
             for _ in range(1_100):
                 _ = stack.enter_context(TimerContext("level"))
-        assert len(get_execution_times_report(flatten=False).splitlines()) == 1_103
+        assert len(get_execution_times_report(flatten=False).splitlines()) == 1_102
 
     def test_async_cancellation_records_time_and_restores_parent(self) -> None:
         @TimerContext("cancelled")
@@ -996,7 +1022,7 @@ class TestSnapshotSemantics:
         payload = cast(TimingsPayload, json.loads(get_execution_times_json(flatten=flatten)))
         assert payload["total_category_time"] == {"cpu": 5.0, "io": 3.0}
         assert get_total_category_time("cpu") == 5.0
-        assert get_total_time(flatten=flatten) == 5.0
+        assert get_total_time() == 5.0
 
     def test_empty_json(self) -> None:
         assert json.loads(get_execution_times_json(indent=None)) == {
@@ -1024,5 +1050,5 @@ class TestSnapshotSemantics:
         with caplog.at_level(logging.INFO, logger=logger.name):
             log_execution_times(flatten=False, logger=logger)
         assert [(record.name, record.message) for record in caplog.records] == [
-            (logger.name, get_execution_times_report(flatten=False))
+            (logger.name, "\n" + get_execution_times_report(flatten=False))
         ]
