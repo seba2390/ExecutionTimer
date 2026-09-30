@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-30
+
 ### Changed
 
 - Decorating a generator function or an async generator function now raises `TypeError`.
@@ -83,6 +85,7 @@ First public release on PyPI.
   `py.typed` marker so type checkers use the inline annotations.
 - `__version__` attribute on the package.
 
-[Unreleased]: https://github.com/seba2390/ExecutionTimer/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/seba2390/ExecutionTimer/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/seba2390/ExecutionTimer/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/seba2390/ExecutionTimer/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/seba2390/ExecutionTimer/releases/tag/v0.1.0
