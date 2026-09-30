@@ -208,6 +208,25 @@ class TestReporting:
             assert get_execution_times_report() == ""
         assert caplog.records == []
 
+    @pytest.mark.parametrize(
+        ("seconds", "expected"),
+        [
+            (0.0000004, "0.400 µs"),
+            (0.0000482134, "48.213 µs"),
+            (0.0009999994, "999.999 µs"),
+            (0.0009999996, "1.000 ms"),
+            (0.3156, "315.600 ms"),
+            (0.9999996, "1.000 s"),
+            (2.5, "2.500 s"),
+            (3725.0, "3725.000 s"),
+        ],
+    )
+    def test_report_picks_a_unit_that_keeps_short_sections_visible(self, seconds: float, expected: str) -> None:
+        with patch.object(time, "perf_counter", side_effect=[0.0, seconds]), TimerContext("section"):
+            pass
+
+        assert get_execution_times_report() == f"Total time: {expected}.\n\nsection: {expected} (100.00%)"
+
     def test_report_flatten_flag(self) -> None:
         with patch.object(time, "perf_counter", side_effect=[0, 1, 1, 2]):
             for i in range(2):
@@ -757,7 +776,7 @@ class TestReportOrdering:
             pass
 
         report = get_execution_times_report()
-        assert "instant: 0.0000 s (0.00%)" in report
+        assert "instant: 0.000 µs (0.00%)" in report
 
 
 class TestRobustness:
@@ -1059,7 +1078,7 @@ class TestLifecycle:
         assert list(raw_timings()) == [("parent", "child")]
         # The cleared parent is gone, so its child is top-level: it counts toward the total
         # and is not indented beneath an unrelated section.
-        assert get_execution_times_report() == "Total time: 2.0000 s.\n\nchild: 2.0000 s (100.00%)"
+        assert get_execution_times_report() == "Total time: 2.000 s.\n\nchild: 2.000 s (100.00%)"
         assert get_total_time() == 2.0
         payload = cast(TimingsPayload, json.loads(get_execution_times_json()))
         assert payload["total_time"] == 2.0
@@ -1078,7 +1097,7 @@ class TestLifecycle:
             with TimerContext("after"):
                 pass
         assert get_execution_times_report() == (
-            "Total time: 5.0000 s.\n\nload: 4.0000 s (80.00%)\n..  parse: 1.0000 s (20.00%)\nafter: 1.0000 s (20.00%)"
+            "Total time: 5.000 s.\n\nload: 4.000 s (80.00%)\n..  parse: 1.000 s (20.00%)\nafter: 1.000 s (20.00%)"
         )
         assert get_total_time() == 5.0
 

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The text report, from `get_execution_times_report()` and `log_execution_times()`, shows
+  each time with three decimals in `µs`, `ms` or `s`, whichever keeps the number below
+  1000: `48.213 µs`, `315.612 ms`, `2.500 s`. It used to show seconds with four
+  decimals, so any section under 50 µs read `0.0000 s`, and fast sections, including a
+  whole recursive call tree, looked like zeros. Code that parses the report text needs
+  updating. `get_execution_timings()` and the JSON export are unchanged and still return
+  seconds.
+
 ## [1.0.3] - 2026-09-30
 
 ### Changed
