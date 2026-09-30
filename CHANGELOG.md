@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Exiting a section while an inner one is still active, typically because a paused
+  generator holds a section open, no longer raises `RuntimeError`. The raise replaced any
+  exception already propagating from the timed block and left the active stack corrupted
+  for the rest of the thread. The timer now emits a `RuntimeWarning`, records the exited
+  section, and discards the unfinished inner sections. Exiting a section that is no longer
+  active does nothing, so closing the paused generator later no longer raises either.
+
 ## [0.2.0] - 2026-09-30
 
 ### Changed

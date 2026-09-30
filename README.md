@@ -221,6 +221,11 @@ across a `yield` therefore also contains whatever the caller times while the gen
 paused, and its duration includes that paused time. Close sections before yielding, or
 time the loop that consumes the generator instead.
 
+If the caller's section exits while a paused generator's section is still open, the
+timer never raises: it emits a `RuntimeWarning`, records the caller's section, and
+discards the generator's unfinished one, so later sections nest correctly. Closing that
+generator afterwards does nothing.
+
 ### Reusing contexts and clearing timings
 
 A `TimerContext` can be reused, nested within itself, or shared by concurrent calls.

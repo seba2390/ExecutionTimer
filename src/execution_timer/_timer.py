@@ -14,6 +14,7 @@ import json
 import logging
 import threading
 import time
+import warnings
 from collections.abc import Callable, Coroutine, Iterable, Iterator
 from contextvars import ContextVar
 from itertools import count
@@ -134,13 +135,27 @@ class _ExecutionTimer:
         _ = _ACTIVE_CONTEXT.set(_Frame(full_name, category, time.perf_counter(), entry, parent))
 
     def stop_timer(self, name: str) -> None:
-        """Stop timing a section and accumulate its elapsed time."""
+        """Stop timing a section and accumulate its elapsed time.
+
+        Never raises: an exception here would replace one already propagating from the timed
+        block. Exiting past still-active inner sections (typically a suspended generator that
+        holds one open) discards them with a warning, so the stack cannot stay corrupted.
+        Exiting a section that is no longer active, such as one discarded that way when its
+        generator is finally closed, does nothing.
+        """
         end_time = time.perf_counter()
-        frame = _ACTIVE_CONTEXT.get()
+        active = _ACTIVE_CONTEXT.get()
+        frame = active
+        while frame is not None and frame.path[-1] != name:
+            frame = frame.parent
         if frame is None:
             return
-        if frame.path[-1] != name:
-            raise RuntimeError(f"Cannot stop '{name}' while '{frame.path[-1]}' is active.")
+        if frame is not active and active is not None:
+            msg = (
+                f"Section '{name}' exited while '{active.path[-1]}' was still active; discarding the "
+                "unfinished inner sections. Close sections before a generator yields."
+            )
+            warnings.warn(msg, RuntimeWarning, stacklevel=3)
         with self._lock:
             # A clear detaches this entry from the registry. Updating the detached object
             # cannot resurrect an old sample or add it to a replacement at the same path.
