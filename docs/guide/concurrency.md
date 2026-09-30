@@ -57,11 +57,33 @@ the same.
 
 ## Threads
 
-New threads do **not** inherit the active stack. Sections recorded in a thread appear at the
-top level of the report, and their time is added to the total alongside the section that
-started the thread:
+Whether a new thread starts inside the section that started it depends on the Python build:
+
+- **Regular builds**, including Python 3.14, start each new thread with an empty stack.
+  Sections recorded in the thread appear at the top level of the report, and their time
+  is added to the total alongside the section that started the thread.
+- **Free-threaded builds of Python 3.14** start each new thread with a copy of the context
+  of the code that called {meth}`~threading.Thread.start`. Sections recorded in the thread
+  nest under the section that was open at that moment.
+
+Python's `-X thread_inherit_context` option switches between the two on any 3.14 build,
+and `sys.flags.thread_inherit_context` reports which one is in effect.
+
+### Thread pools
+
+The difference matters most for thread pools, because a pool reuses its threads.
+{class}`~concurrent.futures.ThreadPoolExecutor` starts a worker thread when work is
+submitted and keeps it for later work. On a free-threaded build, the worker keeps the
+stack it started with for as long as it lives, so work submitted later, from a different
+section or from none, still nests under the section that was open when the worker started.
+On a regular build, the same work is recorded at the top level.
+
+To get the same report on every build, pick the context for each call yourself. To nest
+thread work under the current section, run each call in a fresh copy of the current
+context from {func}`contextvars.copy_context`:
 
 ```python
+import contextvars
 from concurrent.futures import ThreadPoolExecutor
 
 from execution_timer import clear_execution_timings
@@ -74,28 +96,38 @@ def download(n: int) -> int:
     return n
 
 
-with TimerContext("batch"), ThreadPoolExecutor() as pool:
-    list(pool.map(download, range(4)))  # recorded as ("download",), not ("batch", "download")
+with ThreadPoolExecutor(max_workers=2) as pool:
+    with TimerContext("batch"):
+        futures = [pool.submit(contextvars.copy_context().run, download, n) for n in range(4)]
+        results = [future.result() for future in futures]
+    with TimerContext("retry"):
+        pool.submit(contextvars.copy_context().run, download, 0).result()
+
+timings = get_execution_timings()
+assert ("batch", "download") in timings
+assert ("retry", "download") in timings
+assert ("download",) not in timings
 ```
 
-To nest thread work under the current section, run it in a copy of the current context
-with {func}`contextvars.copy_context`, or use {func}`asyncio.to_thread`, which does that for
-you:
+Copy the context for every call rather than once per section: a context can't be entered
+by two threads at the same time. {func}`asyncio.to_thread` copies the context for you.
+
+To keep thread work at the top level on every build, run each call in a new, empty
+{class}`~contextvars.Context` instead:
 
 ```python
-import contextvars
-
 clear_execution_timings()
 
-with TimerContext("batch"), ThreadPoolExecutor() as pool:
-    context = contextvars.copy_context()
-    pool.submit(context.run, download, 1).result()
+with ThreadPoolExecutor(max_workers=2) as pool, TimerContext("batch"):
+    pool.submit(contextvars.Context().run, download, 1).result()
 
-assert ("batch", "download") in get_execution_timings()
+timings = get_execution_timings()
+assert ("download",) in timings
+assert ("batch", "download") not in timings
 ```
 
-On free-threaded builds of Python 3.14, new threads inherit the context by default, so
-thread sections nest without extra work.
+The same works for a plain thread: pass `target=contextvars.copy_context().run` or
+`target=contextvars.Context().run`, followed by the function and its arguments in `args`.
 
 ## Overlapping calls add up
 
