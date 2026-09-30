@@ -86,8 +86,10 @@ How to read the report:
   `pipeline`.
 - **Total time** is the sum of the top-level sections. Nested sections are part of their
   parent's time, so they aren't added again.
-- **Percentages** are shares of the total, at every level. `validate` took 13.88% of the
-  whole run, not 13.88% of `transform`.
+- **Percentages** are shares of the total, at every level. `validate` took 13.97% of the
+  whole run, not 13.97% of `transform`.
+- **Times** have three decimals, in `µs`, `ms` or `s`, whichever keeps the number below
+  1000, so even very fast sections show a real value.
 
 Calling {func}`~execution_timer.clear_execution_timings` starts over with an empty
 registry.

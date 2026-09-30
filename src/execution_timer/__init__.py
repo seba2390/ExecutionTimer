@@ -18,7 +18,7 @@ from execution_timer._timer import (
     save_execution_timings_json,
 )
 
-__version__ = "1.0.3"
+__version__ = "1.1.0"
 
 __all__ = [
     "DEFAULT_CATEGORY",
