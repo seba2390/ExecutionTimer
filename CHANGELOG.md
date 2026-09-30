@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- A documentation site at <https://seba2390.github.io/ExecutionTimer/>, with a getting
+  started guide, a user guide and an API reference generated from the docstrings. It is
+  built with Sphinx and deployed to GitHub Pages whenever `main` changes. The package's
+  `Documentation` link points to it from the next release on.
+- The README is shorter and links to the site for details.
+- Public functions and types have full docstrings, with parameters, return values and
+  exceptions.
+- The Python examples in the README and the documentation run as part of the test suite,
+  and CI builds the site on every pull request, failing on any warning.
+
 ## [1.0.2] - 2026-09-30
 
 ### Fixed

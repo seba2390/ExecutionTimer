@@ -41,8 +41,24 @@ machine and Python version, without coverage instrumentation:
 uv run python benchmarks/overhead.py --number 100000 --repeat 9
 ```
 
-See [benchmarks/README.md](benchmarks/README.md) for methodology and reference results.
+See [benchmarks/README.md](https://github.com/seba2390/ExecutionTimer/blob/main/benchmarks/README.md) for methodology and reference results.
 Timing results are advisory rather than CI pass/fail thresholds.
+
+## Documentation
+
+The documentation site is built with [Sphinx](https://www.sphinx-doc.org/) from the
+Markdown pages in `docs/` and the docstrings in `src/`. To build and preview it:
+
+```bash
+uv run --group docs sphinx-build -M html docs docs/_build -W --keep-going -n
+```
+
+Then open `docs/_build/html/index.html`. CI builds the site on every pull request and fails
+on any warning, such as a broken cross-reference. Changes merged into `main` are published
+to [GitHub Pages](https://seba2390.github.io/ExecutionTimer/) automatically.
+
+The Python examples in `docs/` and `README.md` run as part of the test suite, so keep them
+self-contained and runnable.
 
 ## Guidelines
 
@@ -50,7 +66,7 @@ Timing results are advisory rather than CI pass/fail thresholds.
   `execution_timer._timer`. This keeps internals free to change.
 - Every behaviour change needs a test that fails before the fix and passes after it.
 - Public functions carry type annotations and a one-line docstring.
-- Add an entry under `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md).
+- Add an entry under `## [Unreleased]` in [CHANGELOG.md](https://github.com/seba2390/ExecutionTimer/blob/main/CHANGELOG.md).
 
 ## Releasing
 
@@ -68,7 +84,7 @@ Maintainers only:
 5. Publish a GitHub release tagged `vX.Y.Z`, targeting the merged commit on `main`.
    Use that version's changelog entries as release notes.
 
-The [Publish to PyPI workflow](.github/workflows/publish.yml) runs when a GitHub release
+The [Publish to PyPI workflow](https://github.com/seba2390/ExecutionTimer/blob/main/.github/workflows/publish.yml) runs when a GitHub release
 is **published**. Pushing to `main`, pushing a tag alone, or saving a draft release does
 not trigger it. The workflow builds and validates the distributions, checks that the tag
 matches `__version__`, and uploads them to PyPI via Trusted Publishing. No manual

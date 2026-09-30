@@ -27,32 +27,42 @@ R = TypeVar("R")
 T = TypeVar("T")
 
 DEFAULT_CATEGORY: Final = "default"
+"""The category of sections created without one."""
 
 _LOGGER: Final = logging.getLogger(__name__)
 
 
 class TimingReport(TypedDict):
-    """Timing entry for one section: elapsed seconds and its category."""
+    """Timing entry for one section, as returned by :func:`get_execution_timings`."""
 
     time: float
+    """Accumulated elapsed seconds."""
     category: str
+    """The section's category."""
 
 
 class SectionRecord(TypedDict):
-    """One section in the JSON export."""
+    """One section in the JSON export, see :class:`TimingsPayload`."""
 
     name: str
+    """The section's own name, the last element of :attr:`path`."""
     path: list[str]
+    """Names from the top-level section down to this one."""
     time: float
+    """Accumulated elapsed seconds, rounded to microseconds."""
     category: str
+    """The section's category."""
 
 
 class TimingsPayload(TypedDict):
-    """Top-level JSON export payload."""
+    """Top-level object of the JSON export from :func:`get_execution_times_json`."""
 
     total_time: float
+    """Seconds across all top-level sections, as returned by :func:`get_total_time`."""
     total_category_time: dict[str, float]
+    """Seconds per category, counting only the top-most section of each category."""
     sections: list[SectionRecord]
+    """Every section, ordered depth-first so children follow their parent."""
 
 
 class _TimesDict(TypedDict):
@@ -258,7 +268,32 @@ def _has_ancestor_with_category(
 
 
 class TimerContext:
-    """Context manager and decorator for timing a named section of code."""
+    """Context manager and decorator for timing a named section of code.
+
+    Sections entered inside another section are recorded beneath it, so nesting ``with``
+    blocks or decorated calls builds the hierarchy shown in reports. Repeated entries of the
+    same section accumulate their durations. A context can be reused, re-entered while it is
+    active, and shared between threads and asyncio tasks.
+
+    Args:
+        name: The section's name within its parent.
+        category: Any string used to group sections, for example ``"io"`` or ``"gpu"``.
+        counter: Records the section as ``name[counter]``, typically a loop index. Reports
+            merge these variants unless you pass ``flatten=False``.
+
+    Raises:
+        ValueError: On entry, if a rule from :func:`register_forbidden_nesting` forbids this
+            category directly inside the enclosing section's category.
+
+    Example:
+        .. code-block:: python
+
+            with TimerContext("load", category="io"):
+                data = load()
+
+            @TimerContext("solve")
+            def solve(data): ...
+    """
 
     def __init__(self, name: str, category: str = DEFAULT_CATEGORY, counter: int | None = None) -> None:
         self.name: str = _build_name_with_counter(name, counter)
@@ -279,8 +314,11 @@ class TimerContext:
 
         Coroutine functions are wrapped so the timing spans the entire ``await``, not just
         creation of the coroutine object. So is a coroutine returned by a plain function,
-        typically another decorator stacked on an ``async def``. Generator functions are
-        rejected: a wrapper would time only creation of the generator object, not its iteration.
+        typically another decorator stacked on an ``async def``.
+
+        Raises:
+            TypeError: If ``func`` is a generator or async generator function. A wrapper
+                would time only creation of the generator object, not its iteration.
         """
         if inspect.isgeneratorfunction(func) or inspect.isasyncgenfunction(func):
             msg = (
@@ -341,12 +379,30 @@ def _basic_name_without_counter(name: str) -> str:
 
 
 def get_execution_times_report(*, flatten: bool = True) -> str:
-    """Get a formatted report of all recorded sections (``""`` if none); flatten counters if requested."""
+    """Get a formatted, indented report of all recorded sections.
+
+    Each line shows a section's accumulated seconds and its share of the total time.
+    Indentation reflects nesting.
+
+    Args:
+        flatten: Merge ``counter`` variants such as ``step[0]`` and ``step[1]`` into ``step``.
+
+    Returns:
+        The report, or ``""`` if nothing has been recorded.
+    """
     return _TIMER.report_timings(flatten=flatten)
 
 
 def log_execution_times(*, flatten: bool = True, logger: logging.Logger | None = None) -> None:
-    """Log the execution-times report at INFO level, or a warning if there is nothing to report."""
+    """Log the report from :func:`get_execution_times_report` at ``INFO`` level.
+
+    Logs a warning instead if nothing has been recorded. Does nothing, and skips building
+    the report, if the logger has ``INFO`` disabled.
+
+    Args:
+        flatten: Merge ``counter`` variants of a section.
+        logger: The logger to use. Defaults to the ``execution_timer._timer`` logger.
+    """
     target = logger if logger is not None else _LOGGER
     if target.isEnabledFor(logging.INFO):
         report = get_execution_times_report(flatten=flatten)
@@ -358,7 +414,15 @@ def log_execution_times(*, flatten: bool = True, logger: logging.Logger | None =
 
 
 def get_execution_timings(*, flatten: bool = True) -> dict[tuple[str, ...], TimingReport]:
-    """Get elapsed seconds and category for every recorded section; flatten counters if requested."""
+    """Get elapsed seconds and category for every recorded section.
+
+    Args:
+        flatten: Merge ``counter`` variants of a section.
+
+    Returns:
+        A new dictionary keyed by section path, such as ``("solve", "step")``. Changing it
+        does not affect the recorded timings.
+    """
     return _TIMER.get_execution_timings(flatten=flatten)
 
 
@@ -388,34 +452,79 @@ def _build_payload(*, flatten: bool = True) -> TimingsPayload:
 
 
 def get_execution_times_json(*, flatten: bool = True, indent: int | None = 2) -> str:
-    """Get all timings as a JSON string (LLM-friendly); flatten counters if requested."""
+    """Get all timings as a JSON document shaped like :class:`TimingsPayload`.
+
+    Args:
+        flatten: Merge ``counter`` variants of a section.
+        indent: Passed to :func:`json.dumps`; ``None`` gives the most compact output.
+
+    Returns:
+        The JSON text.
+    """
     return json.dumps(_build_payload(flatten=flatten), indent=indent)
 
 
 def save_execution_timings_json(path: str | Path, *, flatten: bool = True, indent: int | None = 2) -> Path:
-    """Write all timings to a JSON file and return its path; flatten counters if requested."""
+    """Write the JSON from :func:`get_execution_times_json` to a UTF-8 file.
+
+    Args:
+        path: The file to write, replacing it if it exists. Its directory must exist.
+        flatten: Merge ``counter`` variants of a section.
+        indent: Passed to :func:`json.dumps`.
+
+    Returns:
+        The path written to.
+    """
     out = Path(path)
     _ = out.write_text(get_execution_times_json(flatten=flatten, indent=indent) + "\n", encoding="utf-8")
     return out
 
 
 def get_total_time() -> float:
-    """Get total elapsed seconds across all top-level sections."""
+    """Get total elapsed seconds across all top-level sections.
+
+    Nested sections are part of their parent's time, so they are not added again.
+
+    Returns:
+        The total, or ``0.0`` if nothing has been recorded.
+    """
     return _TIMER.compute_total_time()
 
 
 def get_total_category_time(category: str) -> float:
-    """Get total elapsed seconds in a category, counting only top-most entries of that category."""
+    """Get total elapsed seconds in a category.
+
+    Only the top-most section of the category counts: a section nested inside another of
+    the same category is part of that section's time and is not added again.
+
+    Args:
+        category: The category to total.
+
+    Returns:
+        The total, or ``0.0`` for a category with no sections.
+    """
     return _TIMER.compute_total_category_time(category)
 
 
 def clear_execution_timings() -> None:
-    """Reset all recorded timings."""
+    """Discard all recorded timings.
+
+    A section that is active during the clear is not recorded when it exits. Sections
+    started inside it afterwards are recorded as top-level sections. Nesting rules are kept;
+    see :func:`clear_forbidden_nesting`.
+    """
     _TIMER.clear()
 
 
 def register_forbidden_nesting(outer: str, inner: str) -> None:
-    """Forbid timing sections of category ``inner`` directly inside sections of category ``outer``."""
+    """Forbid sections of category ``inner`` directly inside sections of category ``outer``.
+
+    Entering such a section raises :class:`ValueError`. Only the direct parent is checked.
+
+    Args:
+        outer: The enclosing section's category.
+        inner: The category that may not appear directly inside it.
+    """
     _TIMER.register_forbidden_nesting(outer, inner)
 
 
