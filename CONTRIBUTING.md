@@ -26,11 +26,12 @@ uv run basedpyright
 All four must pass. Coverage is enforced at 95%; the current suite has 100% statement
 and branch coverage. Preserve coverage when adding or changing behavior.
 
-The test suite is also run against Python 3.12, 3.13 and 3.14 on Linux, macOS and Windows.
+The test suite is also run against Python 3.11, 3.12, 3.13, 3.14 and free-threaded 3.14t
+on Linux, macOS and Windows.
 To check another interpreter locally:
 
 ```bash
-uv run --python 3.12 pytest
+uv run --python 3.11 pytest
 ```
 
 For changes to recording or reporting performance, compare the benchmark on the same
