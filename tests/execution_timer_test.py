@@ -2,10 +2,12 @@
 
 import asyncio
 import builtins
+import contextvars
 import functools
 import inspect
 import json
 import logging
+import sys
 import threading
 import time
 import warnings
@@ -37,6 +39,10 @@ from execution_timer import (
 
 P = ParamSpec("P")
 R = TypeVar("R")
+
+# New threads start in a copy of the starting thread's context. The default on free-threaded
+# Python 3.14; the flag does not exist before 3.14.
+THREADS_INHERIT_CONTEXT = bool(getattr(sys.flags, "thread_inherit_context", False))
 
 
 @pytest.fixture(autouse=True)
@@ -589,6 +595,47 @@ class TestThreading:
         # No cross-thread nesting.
         assert ("t0", "c1") not in timings
         assert ("t1", "c0") not in timings
+
+    def test_new_thread_nests_under_the_starting_section_only_where_threads_inherit_context(self) -> None:
+        thread = threading.Thread(target=TimerContext("work")(lambda: None))
+        with TimerContext("outer"):
+            thread.start()
+            thread.join()
+
+        expected = ("outer", "work") if THREADS_INHERIT_CONTEXT else ("work",)
+        assert set(raw_timings()) == {("outer",), expected}
+
+    def test_reused_pool_worker_keeps_the_section_it_started_in_where_threads_inherit_context(self) -> None:
+        """A pool worker inherits the context once, when it starts, and keeps it for later work."""
+        work = TimerContext("work")(lambda: None)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            with TimerContext("phase_a"):
+                pool.submit(work).result()
+            with TimerContext("phase_b"):
+                pool.submit(work).result()
+
+        # Where threads inherit context, phase_b's call is misfiled under phase_a.
+        expected = {("phase_a", "work")} if THREADS_INHERIT_CONTEXT else {("work",)}
+        assert set(raw_timings()) == {("phase_a",), ("phase_b",), *expected}
+
+    def test_copying_the_context_per_call_nests_pool_work_on_every_build(self) -> None:
+        work = TimerContext("work")(lambda: None)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            with TimerContext("phase_a"):
+                futures = [pool.submit(contextvars.copy_context().run, work) for _ in range(4)]
+                _ = [future.result() for future in futures]
+            with TimerContext("phase_b"):
+                pool.submit(contextvars.copy_context().run, work).result()
+            pool.submit(contextvars.copy_context().run, work).result()
+
+        assert set(raw_timings()) == {("phase_a",), ("phase_a", "work"), ("phase_b",), ("phase_b", "work"), ("work",)}
+
+    def test_an_empty_context_per_call_keeps_pool_work_top_level_on_every_build(self) -> None:
+        work = TimerContext("work")(lambda: None)
+        with ThreadPoolExecutor(max_workers=1) as pool, TimerContext("outer"):
+            pool.submit(contextvars.Context().run, work).result()
+
+        assert set(raw_timings()) == {("outer",), ("work",)}
 
 
 class TestAsyncDecorator:

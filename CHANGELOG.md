@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-10-01
+
+### Documentation
+
+- The threads section of the concurrency guide was wrong for free-threaded Python 3.14.
+  There, a new thread starts in a copy of the context that started it, so its sections
+  nest under the section that was open at that moment. A thread pool reuses its workers,
+  so each worker keeps the section it started under: work submitted later from another
+  section was reported under the first one. The guide said pool work is always reported at
+  the top level, and that free-threaded builds nest thread work correctly with no extra
+  work. Neither was true on every build. The guide now explains the difference and shows
+  how to get the same report on every build: run each call in
+  `contextvars.copy_context().run` to nest it under the current section, or in
+  `contextvars.Context().run` to keep it at the top level. Behaviour is unchanged.
+- Tests cover how threads and reused pool workers nest on each kind of build, and both
+  recipes. The guide's examples assert their results on every build.
+
 ## [1.1.0] - 2026-09-30
 
 ### Changed
@@ -206,7 +223,8 @@ First public release on PyPI.
   `py.typed` marker so type checkers use the inline annotations.
 - `__version__` attribute on the package.
 
-[Unreleased]: https://github.com/seba2390/ExecutionTimer/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/seba2390/ExecutionTimer/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/seba2390/ExecutionTimer/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/seba2390/ExecutionTimer/compare/v1.0.3...v1.1.0
 [1.0.3]: https://github.com/seba2390/ExecutionTimer/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/seba2390/ExecutionTimer/compare/v1.0.1...v1.0.2
