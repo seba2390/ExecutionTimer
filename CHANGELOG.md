@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Three changes below are breaking. They clean up the public API ahead of a stable 1.0
-release.
+## [1.0.0] - 2026-09-30
+
+First stable release. The public API is now covered by semantic versioning: breaking
+changes will wait for 2.0. Three changes below are breaking; they clean up the API before
+it is frozen.
 
 ### Changed
 
@@ -20,6 +23,7 @@ release.
 - `get_execution_times_report()` no longer logs a warning when there are no timings; it
   returns `""`. `log_execution_times()` warns instead, on the logger it was given, so
   building an empty report no longer prints to stderr when logging is not configured.
+- The package is classified as `Development Status :: 5 - Production/Stable`.
 
 ### Removed
 
@@ -125,7 +129,8 @@ First public release on PyPI.
   `py.typed` marker so type checkers use the inline annotations.
 - `__version__` attribute on the package.
 
-[Unreleased]: https://github.com/seba2390/ExecutionTimer/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/seba2390/ExecutionTimer/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/seba2390/ExecutionTimer/compare/v0.2.0...v1.0.0
 [0.2.0]: https://github.com/seba2390/ExecutionTimer/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/seba2390/ExecutionTimer/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/seba2390/ExecutionTimer/releases/tag/v0.1.0
