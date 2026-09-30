@@ -103,6 +103,9 @@ Coroutine functions are supported natively — the timing spans the entire `awai
 async def fetch(url: str) -> bytes: ...
 ```
 
+This also holds when another decorator sits between `TimerContext` and the `async def`
+and returns its coroutine: the section covers both the call and the `await`.
+
 Generator functions (including `async` generators) cannot be decorated and raise a
 `TypeError`: the decorator would time only the creation of the generator object, not its
 iteration. Time the loop that consumes the generator with a `with` block instead.
@@ -122,7 +125,9 @@ get_execution_timings(flatten=False)  # {("step[0]",): ..., ("step[1]",): ..., .
 ```
 
 Flattening removes the final integer suffix (including negative counters). Other
-bracketed names such as `array[index]` are preserved. If merged entries have different
+bracketed names such as `array[index]` are preserved. Flattening cannot tell a counter
+from a name you wrote yourself, so sections named `"row[1]"` and `"row[2]"` are also merged
+into `row`; use `flatten=False` to keep them apart. If merged entries have different
 categories, the category from the most recently entered section is used.
 
 Each counter value is stored as its own section until `clear_execution_timings()` is
@@ -255,7 +260,6 @@ an active section's current duration is added only when it exits.
 Run the repeatable benchmark with `uv run python benchmarks/overhead.py`. It measures
 fresh and reused contexts, sync and async decorators, nesting, and reporting. Compare
 results using the same interpreter and machine; see [benchmarks/README.md](https://github.com/seba2390/ExecutionTimer/blob/main/benchmarks/README.md).
-`log_execution_times()` skips building a report when its logger has `INFO` disabled.
 
 ## API
 
@@ -263,7 +267,7 @@ results using the same interpreter and machine; see [benchmarks/README.md](https
 | --- | --- |
 | `TimerContext(name, category=DEFAULT_CATEGORY, counter=None)` | Context manager **and** decorator for timing a section. |
 | `get_execution_times_report(*, flatten=True)` | Formatted, indented report of all sections (`""` if none). |
-| `log_execution_times(*, flatten=True, logger=None)` | Log that report at `INFO` level (a warning if empty). |
+| `log_execution_times(*, flatten=True, logger=None)` | Log that report at `INFO` level (a warning if empty); a no-op if `INFO` is disabled. |
 | `get_execution_timings(*, flatten=True)` | Timings as `dict[tuple[str, ...], TimingReport]`. |
 | `get_execution_times_json(*, flatten=True, indent=2)` | All timings as a JSON string. |
 | `save_execution_timings_json(path, *, flatten=True, indent=2)` | Write timings to a JSON file; returns the `Path`. |

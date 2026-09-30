@@ -278,8 +278,9 @@ class TimerContext:
         """Decorate a function to time its execution under this context.
 
         Coroutine functions are wrapped so the timing spans the entire ``await``, not just
-        creation of the coroutine object. Generator functions are rejected: a wrapper would
-        time only creation of the generator object, not its iteration.
+        creation of the coroutine object. So is a coroutine returned by a plain function,
+        typically another decorator stacked on an ``async def``. Generator functions are
+        rejected: a wrapper would time only creation of the generator object, not its iteration.
         """
         if inspect.isgeneratorfunction(func) or inspect.isasyncgenfunction(func):
             msg = (
@@ -297,9 +298,19 @@ class TimerContext:
         @functools.wraps(func)
         def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
             with self:
-                return func(*args, **kwargs)
+                result = func(*args, **kwargs)
+            if inspect.iscoroutine(result):
+                # A decorator between this one and an ``async def`` hides the coroutine function,
+                # so the call above only created the coroutine. Time awaiting it as well.
+                return cast("R", self._time_await(result))
+            return result
 
         return wrapper
+
+    async def _time_await(self, coroutine: Coroutine[object, object, T]) -> T:
+        """Await a coroutine that was created outside this context, timing the whole await."""
+        with self:
+            return await coroutine
 
     def _wrap_async(self, func: Callable[P, Coroutine[object, object, T]]) -> Callable[P, Coroutine[object, object, T]]:
         """Wrap a coroutine function so the timing spans the whole await."""
