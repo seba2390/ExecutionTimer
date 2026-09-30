@@ -32,15 +32,19 @@ print(get_execution_times_report())
 ```
 
 ```text
-Total time: 0.0499 s.
+Total time: 48.159 ms.
 
-load_data: 0.0249 s (49.92%)
-solve: 0.0250 s (50.08%)
-..  step: 0.0249 s (49.97%)
+load_data: 24.199 ms (50.25%)
+solve: 23.960 ms (49.75%)
+..  step: 23.904 ms (49.64%)
 ```
 
 Sections appear depth-first, each followed by its children, in the order they were first
 entered. Percentages are shares of the total time at every level.
+
+Times have three decimals, in `µs`, `ms` or `s`, whichever keeps the number below 1000.
+A 48 µs section reads `48.213 µs` rather than rounding to zero. The dictionary and JSON
+readers below return plain seconds.
 
 ## Logging
 
@@ -58,11 +62,11 @@ log_execution_times()
 
 ```text
 INFO:execution_timer._timer:
-Total time: 0.0499 s.
+Total time: 48.159 ms.
 
-load_data: 0.0249 s (49.92%)
-solve: 0.0250 s (50.08%)
-..  step: 0.0249 s (49.97%)
+load_data: 24.199 ms (50.25%)
+solve: 23.960 ms (49.75%)
+..  step: 23.904 ms (49.64%)
 ```
 
 It logs to the `execution_timer._timer` logger unless you pass your own with

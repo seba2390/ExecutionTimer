@@ -23,12 +23,12 @@ print(get_execution_times_report())
 ```
 
 ```text
-Total time: 0.3156 s.
+Total time: 312.838 ms.
 
-load_data: 0.1219 s (38.62%)
-solve: 0.1937 s (61.38%)
-..  step: 0.1585 s (50.24%)
-..  postprocess: 0.0350 s (11.10%)
+load_data: 124.682 ms (39.85%)
+solve: 188.157 ms (60.15%)
+..  step: 154.718 ms (49.46%)
+..  postprocess: 33.295 ms (10.64%)
 ```
 
 ## Why executiontimer

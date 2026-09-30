@@ -198,11 +198,11 @@ class _ExecutionTimer:
         # Total the unflattened paths, like get_total_time and the JSON export.
         total_time = _top_level_time(snapshot)
         timings = _flatten(snapshot) if flatten else snapshot
-        report = [f"Total time: {total_time:.4f} s.\n"]
+        report = [f"Total time: {_format_duration(total_time)}.\n"]
         for key, depth in _ordered_by_hierarchy(timings):
             elapsed_time = timings[key]["elapsed_time"]
             percentage = (elapsed_time / total_time) * 100 if total_time else 0.0
-            report.append(f"{'..  ' * depth}{key[-1]}: {elapsed_time:.4f} s ({percentage:.2f}%)")
+            report.append(f"{'..  ' * depth}{key[-1]}: {_format_duration(elapsed_time)} ({percentage:.2f}%)")
         return "\n".join(report)
 
     def compute_total_time(self) -> float:
@@ -241,6 +241,20 @@ class _ExecutionTimer:
 
 
 _TIMER: Final = _ExecutionTimer()
+
+
+def _format_duration(seconds: float) -> str:
+    """Format seconds with three decimals in the largest of µs, ms and s that stays below 1000.
+
+    The unit is chosen after rounding, so 999.9996 µs reads ``1.000 ms`` rather than
+    ``1000.000 µs``. Sections of any length stay readable, where fixed seconds would show a
+    fast section as zero.
+    """
+    for scale, unit in ((1e6, "µs"), (1e3, "ms")):
+        scaled = seconds * scale
+        if round(scaled, 3) < 1000:
+            return f"{scaled:.3f} {unit}"
+    return f"{seconds:.3f} s"
 
 
 def _flatten(timings: dict[tuple[str, ...], _TimesDict]) -> dict[tuple[str, ...], _TimesDict]:
@@ -378,8 +392,9 @@ def _basic_name_without_counter(name: str) -> str:
 def get_execution_times_report(*, flatten: bool = True) -> str:
     """Get a formatted, indented report of all recorded sections.
 
-    Each line shows a section's accumulated seconds and its share of the total time.
-    Indentation reflects nesting.
+    Each line shows a section's accumulated time and its share of the total time.
+    Indentation reflects nesting. Times have three decimals, in ``µs``, ``ms`` or ``s``,
+    whichever keeps the number below 1000.
 
     Args:
         flatten: Merge ``counter`` variants such as ``step[0]`` and ``step[1]`` into ``step``.

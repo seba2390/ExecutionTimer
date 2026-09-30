@@ -152,11 +152,11 @@ print(get_execution_times_report())
 ```
 
 ```text
-Total time: 0.0354 s.
+Total time: 34.704 ms.
 
-walk: 0.0354 s (100.00%)
-..  walk: 0.0247 s (69.77%)
-..  ..  walk: 0.0125 s (35.38%)
+walk: 34.704 ms (100.00%)
+..  walk: 24.161 ms (69.62%)
+..  ..  walk: 11.603 ms (33.44%)
 ```
 
 For deep recursion, time the top-level call only, for example with a `with` block around

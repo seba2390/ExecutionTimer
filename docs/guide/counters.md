@@ -37,12 +37,12 @@ print(get_execution_times_report(flatten=False))
 ```
 
 ```text
-Total time: 0.0724 s.
+Total time: 67.003 ms.
 
-solve: 0.0724 s (100.00%)
-..  step[0]: 0.0125 s (17.31%)
-..  step[1]: 0.0250 s (34.60%)
-..  step[2]: 0.0347 s (47.97%)
+solve: 67.003 ms (100.00%)
+..  step[0]: 12.542 ms (18.72%)
+..  step[1]: 23.851 ms (35.60%)
+..  step[2]: 30.498 ms (45.52%)
 ```
 
 Use the separate view to find a slow iteration, and the merged view to see the loop's

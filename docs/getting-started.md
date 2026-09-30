@@ -42,9 +42,9 @@ print(get_execution_times_report())
 ```
 
 ```text
-Total time: 0.1035 s.
+Total time: 104.727 ms.
 
-load_data: 0.1035 s (100.00%)
+load_data: 104.727 ms (100.00%)
 ```
 
 Timings are recorded in one registry for the whole process. Every section you time, in any
@@ -72,12 +72,12 @@ print(get_execution_times_report())
 ```
 
 ```text
-Total time: 0.0905 s.
+Total time: 89.826 ms.
 
-pipeline: 0.0905 s (100.00%)
-..  load: 0.0232 s (25.60%)
-..  transform: 0.0673 s (74.32%)
-..  ..  validate: 0.0126 s (13.88%)
+pipeline: 89.826 ms (100.00%)
+..  load: 22.073 ms (24.57%)
+..  transform: 67.726 ms (75.40%)
+..  ..  validate: 12.549 ms (13.97%)
 ```
 
 How to read the report:
@@ -86,8 +86,10 @@ How to read the report:
   `pipeline`.
 - **Total time** is the sum of the top-level sections. Nested sections are part of their
   parent's time, so they aren't added again.
-- **Percentages** are shares of the total, at every level. `validate` took 13.88% of the
-  whole run, not 13.88% of `transform`.
+- **Percentages** are shares of the total, at every level. `validate` took 13.97% of the
+  whole run, not 13.97% of `transform`.
+- **Times** have three decimals, in `µs`, `ms` or `s`, whichever keeps the number below
+  1000, so even very fast sections show a real value.
 
 Calling {func}`~execution_timer.clear_execution_timings` starts over with an empty
 registry.
