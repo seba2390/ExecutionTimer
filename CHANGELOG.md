@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-09-30
+
+### Fixed
+
+- Exiting a section while an inner one is still active no longer leaves the active stack
+  corrupted when warnings are configured as errors (for example pytest's
+  `filterwarnings = ["error"]`). The `RuntimeWarning` was emitted before the exit was
+  recorded, so raising it skipped the cleanup that 1.0.0 introduced. The section is now
+  recorded and the stack unwound before the warning is emitted.
+- Sections whose parent was cleared while active now count as top-level. Previously,
+  clearing timings inside an outer section, such as a periodic clear in a long-running
+  loop, made `get_total_time()`, the report and the JSON `total_time` read `0`, every
+  percentage `0.00%`, and indented the sections beneath an unrelated one in the report.
+
+### Changed
+
+- The build requires `hatchling>=1.27`, the first release that supports the PEP 639
+  `license-files` metadata the project declares.
+- Dependabot groups its monthly updates into one pull request per ecosystem.
+
 ## [1.0.0] - 2026-09-30
 
 First stable release. The public API is now covered by semantic versioning: breaking
@@ -129,7 +149,8 @@ First public release on PyPI.
   `py.typed` marker so type checkers use the inline annotations.
 - `__version__` attribute on the package.
 
-[Unreleased]: https://github.com/seba2390/ExecutionTimer/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/seba2390/ExecutionTimer/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/seba2390/ExecutionTimer/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/seba2390/ExecutionTimer/compare/v0.2.0...v1.0.0
 [0.2.0]: https://github.com/seba2390/ExecutionTimer/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/seba2390/ExecutionTimer/compare/v0.1.0...v0.1.1

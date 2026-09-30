@@ -7,6 +7,7 @@ import json
 import logging
 import threading
 import time
+import warnings
 from collections.abc import AsyncIterator, Generator, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
@@ -935,6 +936,23 @@ class TestLifecycle:
             pass
         assert list(raw_timings()) == [("caller",), ("caller", "generator"), ("after",)]
 
+    def test_warnings_as_errors_still_record_and_unwind_before_raising(self) -> None:
+        def numbers() -> Generator[int]:
+            with TimerContext("generator"):
+                yield 1
+
+        paused = numbers()
+        with patch.object(time, "perf_counter", side_effect=[0, 1, 3]), warnings.catch_warnings():
+            warnings.simplefilter("error", RuntimeWarning)
+            with pytest.raises(RuntimeWarning), TimerContext("caller"):
+                _ = next(paused)
+                raise KeyError("from the body")
+        paused.close()
+        with TimerContext("after"):
+            pass
+        assert raw_timings()["caller",]["time"] == 3.0
+        assert list(raw_timings()) == [("caller",), ("caller", "generator"), ("after",)]
+
     def test_exiting_a_section_that_is_not_active_leaves_the_stack_intact(self) -> None:
         with TimerContext("outer"):
             TimerContext("stranger").__exit__(None, None, None)
@@ -952,11 +970,30 @@ class TestLifecycle:
             with TimerContext("child", category="cpu"):
                 pass
         assert list(raw_timings()) == [("parent", "child")]
-        assert "child: 2.0000 s (0.00%)" in get_execution_times_report()
+        # The cleared parent is gone, so its child is top-level: it counts toward the total
+        # and is not indented beneath an unrelated section.
+        assert get_execution_times_report() == "Total time: 2.0000 s.\n\nchild: 2.0000 s (100.00%)"
+        assert get_total_time() == 2.0
         payload = cast(TimingsPayload, json.loads(get_execution_times_json()))
-        assert payload["total_time"] == 0.0
+        assert payload["total_time"] == 2.0
         assert payload["total_category_time"] == {"cpu": 2.0}
         assert payload["sections"][0]["path"] == ["parent", "child"]
+
+    def test_periodic_clear_inside_an_outer_section_reports_each_interval(self) -> None:
+        clock = [0, 1, 2, 3, 4, 10, 11, 12, 14, 20, 30, 31]
+        with patch.object(time, "perf_counter", side_effect=clock):
+            with TimerContext("main"):
+                for batch in range(2):
+                    with TimerContext("load"), TimerContext("parse"):
+                        pass
+                    if batch == 0:
+                        clear_execution_timings()
+            with TimerContext("after"):
+                pass
+        assert get_execution_times_report() == (
+            "Total time: 5.0000 s.\n\nload: 4.0000 s (80.00%)\n..  parse: 1.0000 s (20.00%)\nafter: 1.0000 s (20.00%)"
+        )
+        assert get_total_time() == 5.0
 
     def test_deep_reports_do_not_depend_on_python_recursion_limit(self) -> None:
         with ExitStack() as stack:

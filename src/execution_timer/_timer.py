@@ -74,11 +74,13 @@ class _Frame(NamedTuple):
 _ACTIVE_CONTEXT: ContextVar[_Frame | None] = ContextVar("execution_timer_context", default=None)
 
 
-def _ordered_by_hierarchy(keys: Iterable[tuple[str, ...]]) -> list[tuple[str, ...]]:
+def _ordered_by_hierarchy(keys: Iterable[tuple[str, ...]]) -> list[tuple[tuple[str, ...], int]]:
     """Order section paths depth-first so children always follow their parent.
 
-    Insertion order is preserved within each level, so a parent revisited after an unrelated
-    sibling still renders with its own children rather than beneath the sibling.
+    Returns each path with its depth in the recorded tree, which is shallower than the path
+    length when an ancestor is missing. Insertion order is preserved within each level, so a
+    parent revisited after an unrelated sibling still renders with its own children rather
+    than beneath the sibling.
     """
     keys = list(keys)
     known = set(keys)
@@ -92,14 +94,26 @@ def _ordered_by_hierarchy(keys: Iterable[tuple[str, ...]]) -> list[tuple[str, ..
         else:
             roots.append(key)
 
-    ordered: list[tuple[str, ...]] = []
+    ordered: list[tuple[tuple[str, ...], int]] = []
     # Explicit stack rather than recursion: nesting depth is user-controlled.
-    stack = list(reversed(roots))
+    stack = [(key, 0) for key in reversed(roots)]
     while stack:
-        key = stack.pop()
-        ordered.append(key)
-        stack.extend(reversed(children.get(key, [])))
+        key, depth = stack.pop()
+        ordered.append((key, depth))
+        stack.extend((child, depth + 1) for child in reversed(children.get(key, [])))
     return ordered
+
+
+def _top_level_time(timings: dict[tuple[str, ...], _TimesDict]) -> float:
+    """Sum the sections with no recorded parent, matching the roots of ``_ordered_by_hierarchy``.
+
+    A parent goes missing when timings are cleared while it is active; its children that
+    finish afterwards are then top-level and must count toward the total.
+    """
+    return sum(
+        (info["elapsed_time"] for key, info in timings.items() if len(key) == 1 or key[:-1] not in timings),
+        0.0,
+    )
 
 
 class _ExecutionTimer:
@@ -137,9 +151,10 @@ class _ExecutionTimer:
     def stop_timer(self, name: str) -> None:
         """Stop timing a section and accumulate its elapsed time.
 
-        Never raises: an exception here would replace one already propagating from the timed
-        block. Exiting past still-active inner sections (typically a suspended generator that
-        holds one open) discards them with a warning, so the stack cannot stay corrupted.
+        Never raises, unless warnings are configured as errors: an exception here would replace
+        one already propagating from the timed block. Exiting past still-active inner sections
+        (typically a suspended generator that holds one open) discards them with a warning,
+        after recording the exit, so the stack cannot stay corrupted.
         Exiting a section that is no longer active, such as one discarded that way when its
         generator is finally closed, does nothing.
         """
@@ -150,17 +165,18 @@ class _ExecutionTimer:
             frame = frame.parent
         if frame is None:
             return
-        if frame is not active and active is not None:
-            msg = (
-                f"Section '{name}' exited while '{active.path[-1]}' was still active; discarding the "
-                "unfinished inner sections. Close sections before a generator yields."
-            )
-            warnings.warn(msg, RuntimeWarning, stacklevel=3)
         with self._lock:
             # A clear detaches this entry from the registry. Updating the detached object
             # cannot resurrect an old sample or add it to a replacement at the same path.
             frame.entry["elapsed_time"] += end_time - frame.start_time
         _ = _ACTIVE_CONTEXT.set(frame.parent)
+        if frame is not active and active is not None:
+            # Warn only once the state is consistent: warnings configured as errors raise here.
+            msg = (
+                f"Section '{name}' exited while '{active.path[-1]}' was still active; discarding the "
+                "unfinished inner sections. Close sections before a generator yields."
+            )
+            warnings.warn(msg, RuntimeWarning, stacklevel=3)
 
     def _resolve(self, *, flatten: bool) -> dict[tuple[str, ...], _TimesDict]:
         snapshot = self.snapshot()
@@ -168,23 +184,25 @@ class _ExecutionTimer:
 
     def report_timings(self, *, flatten: bool = True) -> str:
         """Build a report of all sections with duration and percentage of total time."""
-        timings = self._resolve(flatten=flatten)
-        if not timings:
+        snapshot = self.snapshot()
+        if not snapshot:
             return ""
 
-        total_time = sum(info["elapsed_time"] for key, info in timings.items() if len(key) == 1)
+        # Total the unflattened paths, like get_total_time and the JSON export.
+        total_time = _top_level_time(snapshot)
+        timings = _flatten(snapshot) if flatten else snapshot
         report = [f"Total time: {total_time:.4f} s.\n"]
-        for key in _ordered_by_hierarchy(timings):
+        for key, depth in _ordered_by_hierarchy(timings):
             elapsed_time = timings[key]["elapsed_time"]
             percentage = (elapsed_time / total_time) * 100 if total_time else 0.0
-            report.append(f"{'..  ' * (len(key) - 1)}{key[-1]}: {elapsed_time:.4f} s ({percentage:.2f}%)")
+            report.append(f"{'..  ' * depth}{key[-1]}: {elapsed_time:.4f} s ({percentage:.2f}%)")
         return "\n".join(report)
 
     def compute_total_time(self) -> float:
         """Compute total elapsed time across all top-level sections."""
         # Counter merging cannot change the sum, so there is no snapshot to copy or flatten.
         with self._lock:
-            return sum((info["elapsed_time"] for key, info in self.timings.items() if len(key) == 1), 0.0)
+            return _top_level_time(self.timings)
 
     def compute_total_category_time(self, category: str) -> float:
         """Compute total elapsed time in a category, counting only top-most entries of that category."""
@@ -344,7 +362,7 @@ def _build_payload(*, flatten: bool = True) -> TimingsPayload:
             "time": round(timings[key]["elapsed_time"], 6),
             "category": timings[key]["category"],
         }
-        for key in _ordered_by_hierarchy(timings)
+        for key, _ in _ordered_by_hierarchy(timings)
     ]
     category_totals: dict[str, float] = {}
     for key, info in snapshot.items():
@@ -352,7 +370,7 @@ def _build_payload(*, flatten: bool = True) -> TimingsPayload:
         if not _has_ancestor_with_category(snapshot, key, category):
             category_totals[category] = category_totals.get(category, 0.0) + info["elapsed_time"]
     return {
-        "total_time": round(sum((info["elapsed_time"] for key, info in snapshot.items() if len(key) == 1), 0.0), 6),
+        "total_time": round(_top_level_time(snapshot), 6),
         "total_category_time": {cat: round(category_totals[cat], 6) for cat in sorted(category_totals)},
         "sections": sections,
     }

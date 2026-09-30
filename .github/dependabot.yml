@@ -6,6 +6,9 @@ updates:
       interval: "monthly"
     commit-message:
       prefix: "ci"
+    groups:
+      actions:
+        patterns: ["*"]
 
   - package-ecosystem: "uv"
     directory: "/"
@@ -13,3 +16,6 @@ updates:
       interval: "monthly"
     commit-message:
       prefix: "build"
+    groups:
+      dev-dependencies:
+        patterns: ["*"]

@@ -44,7 +44,8 @@ Issues = "https://github.com/seba2390/ExecutionTimer/issues"
 Changelog = "https://github.com/seba2390/ExecutionTimer/blob/main/CHANGELOG.md"
 
 [build-system]
-requires = ["hatchling"]
+# 1.27 is the first release that supports PEP 639 license metadata (license-files).
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.hatch.version]
