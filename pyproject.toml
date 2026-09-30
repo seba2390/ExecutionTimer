@@ -38,7 +38,7 @@ dependencies = []
 
 [project.urls]
 Homepage = "https://github.com/seba2390/ExecutionTimer"
-Documentation = "https://github.com/seba2390/ExecutionTimer#readme"
+Documentation = "https://seba2390.github.io/ExecutionTimer/"
 Repository = "https://github.com/seba2390/ExecutionTimer"
 Issues = "https://github.com/seba2390/ExecutionTimer/issues"
 Changelog = "https://github.com/seba2390/ExecutionTimer/blob/main/CHANGELOG.md"
@@ -59,6 +59,7 @@ include = [
     "/src",
     "/tests",
     "/benchmarks",
+    "/docs",
     "/README.md",
     "/LICENSE",
     "/CHANGELOG.md",
@@ -72,6 +73,13 @@ dev = [
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
     "ruff>=0.16.3",
+]
+docs = [
+    "furo>=2025.12.19",
+    "myst-parser>=5.1.0",
+    "sphinx>=9.0.4",
+    "sphinx-copybutton>=0.5.2",
+    "sphinx-design>=0.7.0",
 ]
 
 [tool.pytest.ini_options]

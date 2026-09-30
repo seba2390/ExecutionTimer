@@ -11,27 +11,16 @@
   <a href="https://pypi.org/project/executiontimer/"><img src="https://img.shields.io/pypi/pyversions/executiontimer" alt="Python versions"></a>
   <a href="https://github.com/seba2390/ExecutionTimer/actions/workflows/ci.yml"><img src="https://github.com/seba2390/ExecutionTimer/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/seba2390/ExecutionTimer/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License"></a>
-  <img src="https://img.shields.io/badge/types-py.typed-blue" alt="Typed">
+  <a href="https://seba2390.github.io/ExecutionTimer/"><img src="https://img.shields.io/badge/docs-GitHub%20Pages-4F46E5" alt="Documentation"></a>
 </p>
 
-Time named sections of your code with a `with` block or a decorator. Nested sections
-automatically form a hierarchy, so you get a breakdown of where time actually went — not
-just a single number.
+Time named sections of your code with a `with` block or a decorator. Sections nested inside
+each other form a tree, so you see where the time actually went, not just one number at the
+end.
 
-Zero dependencies. Fully type annotated. Works with threads and `asyncio`.
+Zero dependencies. Fully typed. Works with threads and `asyncio`.
 
-## Features
-
-- ⏱️ **One primitive** — `TimerContext` is both a context manager and a decorator
-- 🌳 **Automatic hierarchy** — nesting `with` blocks nests the report, no wiring required
-- 🏷️ **User-defined categories** — tag sections with any string (`"gpu"`, `"io"`, `"db"`) and get per-category totals
-- ⚡ **Native async** — decorating an `async def` times the whole `await`, not the coroutine object
-- 🧵 **Thread and task safe** — context stacks are isolated per thread and per asyncio task,
-  including on free-threaded Python builds
-- 🔢 **Loop counters** — time each iteration separately, then merge them back together
-- 📤 **JSON export** — structured output for dashboards, CI, or an LLM
-- 🚫 **Nesting rules** — optionally forbid one category inside another to catch mistakes early
-- 📦 **Zero dependencies**
+**Documentation: [seba2390.github.io/ExecutionTimer](https://seba2390.github.io/ExecutionTimer/)**
 
 ## Installation
 
@@ -39,17 +28,8 @@ Zero dependencies. Fully type annotated. Works with threads and `asyncio`.
 pip install executiontimer
 ```
 
-```bash
-uv add executiontimer
-```
-
-Requires Python 3.11+.
-
-> **Note** — the install name is `executiontimer`, the import name is `execution_timer`:
->
-> ```python
-> from execution_timer import TimerContext
-> ```
+Requires Python 3.11+. The install name is `executiontimer`; the import name is
+`execution_timer`.
 
 ## Quick start
 
@@ -80,222 +60,25 @@ solve: 0.1937 s (61.38%)
 ..  postprocess: 0.0350 s (11.10%)
 ```
 
-Indentation reflects nesting. Percentages are relative to the total of all top-level
-sections, so nested entries show their share of the whole run.
-
-## Usage
-
-### As a decorator
+`TimerContext` also works as a decorator, including on `async def` functions:
 
 ```python
-from execution_timer import TimerContext
-
-
 @TimerContext("preprocess")
 def preprocess(rows: list[str]) -> list[str]:
     return [row.strip() for row in rows]
 ```
 
-Coroutine functions are supported natively — the timing spans the entire `await`:
+## Learn more
 
-```python
-@TimerContext("fetch", category="io")
-async def fetch(url: str) -> bytes: ...
-```
-
-This also holds when another decorator sits between `TimerContext` and the `async def`
-and returns its coroutine: the section covers both the call and the `await`.
-
-Generator functions (including `async` generators) cannot be decorated and raise a
-`TypeError`: the decorator would time only the creation of the generator object, not its
-iteration. Time the loop that consumes the generator with a `with` block instead.
-
-### Counters
-
-Pass `counter=i` to time loop iterations separately. The report merges them by default
-(`flatten=True`) and keeps them apart when you ask for it:
-
-```python
-for i in range(3):
-    with TimerContext("step", counter=i):
-        ...
-
-get_execution_timings(flatten=True)  # {("step",): {"time": 0.158, ...}}
-get_execution_timings(flatten=False)  # {("step[0]",): ..., ("step[1]",): ..., ...}
-```
-
-Flattening removes the final integer suffix (including negative counters). Other
-bracketed names such as `array[index]` are preserved. Flattening cannot tell a counter
-from a name you wrote yourself, so sections named `"row[1]"` and `"row[2]"` are also merged
-into `row`; use `flatten=False` to keep them apart. If merged entries have different
-categories, the category from the most recently entered section is used.
-
-Each counter value is stored as its own section until `clear_execution_timings()` is
-called, so a long-running process that times an unbounded loop with `counter=` keeps
-growing the registry. Clear it periodically, or drop `counter=` to accumulate into one
-section.
-
-### Categories
-
-Categories are plain strings — use whatever fits your domain:
-
-```python
-from execution_timer import get_total_category_time
-
-with TimerContext("matmul", category="gpu"):
-    ...
-
-get_total_category_time("gpu")
-```
-
-`get_total_category_time` counts only the *top-most* section of a category, so a `gpu`
-section nested inside another `gpu` section is not double-counted.
-
-Repeated calls to the same path accumulate time. If its category changes, the latest
-category applies to that path's entire accumulated time. Use consistent categories per
-path when you need separate category totals.
-
-You can also forbid a category from appearing inside another, which raises a `ValueError`
-as soon as the invalid nesting happens:
-
-```python
-from execution_timer import register_forbidden_nesting
-
-register_forbidden_nesting(outer="gpu", inner="cpu")
-
-with TimerContext("kernel", category="gpu"):
-    with TimerContext("reduce", category="cpu"):  # ValueError
-        ...
-```
-
-### JSON export
-
-`get_execution_times_json` and `save_execution_timings_json` emit a structured snapshot —
-convenient for dashboards, CI artifacts, or handing to a language model:
-
-```python
-from execution_timer import save_execution_timings_json
-
-save_execution_timings_json("timings.json")
-```
-
-```json
-{
-  "total_time": 0.31556,
-  "total_category_time": { "cpu": 0.035024, "default": 0.31556, "gpu": 0.158528 },
-  "sections": [
-    { "name": "load_data", "path": ["load_data"], "time": 0.121869, "category": "default" },
-    { "name": "solve", "path": ["solve"], "time": 0.193691, "category": "default" },
-    { "name": "step", "path": ["solve", "step"], "time": 0.158528, "category": "gpu" },
-    { "name": "postprocess", "path": ["solve", "postprocess"], "time": 0.035024, "category": "cpu" }
-  ]
-}
-```
-
-Sections and totals come from one snapshot. Category totals use the original paths,
-even when flattening merges sections with different categories.
-
-### Concurrency
-
-The recorded timings live in one process-wide registry guarded by a lock. The *active
-context stack* is stored in a `ContextVar`, so it is isolated per thread and per asyncio
-task: concurrently recorded sections nest independently and merge into a single report.
-
-```python
-async def worker(n: int) -> None:
-    with TimerContext(f"task{n}"):
-        await fetch(...)  # recorded as ("task{n}", "fetch")
-
-
-await asyncio.gather(worker(0), worker(1))
-```
-
-Overlapping calls to the same section path are supported: each call keeps its own start
-time, and their durations are added together. These totals measure accumulated elapsed
-time and can exceed wall-clock duration. Use distinct names (or `counter=`) to report
-concurrent calls separately.
-
-New asyncio tasks inherit the timing context in which they are created. Their sections
-nest under that parent; changes to each task's active stack remain independent. Await
-child tasks inside the parent section if you want the parent duration to include them.
-
-New threads do *not* inherit the timing context, so sections recorded in a thread
-appear at the top level of the report, and their time is added to the total alongside
-the section that started the thread. To nest thread work under the current section, run
-it with `contextvars.copy_context().run(...)` or `asyncio.to_thread(...)`. Either way,
-concurrent threads accumulate overlapping time. (Free-threaded builds of Python 3.14 make
-threads inherit the context by default.)
-
-Generators run in their caller's context. A `with TimerContext(...)` block that stays open
-across a `yield` therefore also contains whatever the caller times while the generator is
-paused, and its duration includes that paused time. Close sections before yielding, or
-time the loop that consumes the generator instead.
-
-If the caller's section exits while a paused generator's section is still open, the
-timer never raises: it emits a `RuntimeWarning`, records the caller's section, and
-discards the generator's unfinished one, so later sections nest correctly. Closing that
-generator afterwards does nothing. If warnings are configured as errors, the warning is
-raised only after that cleanup, so the timings and nesting stay consistent.
-
-### Reusing contexts and clearing timings
-
-A `TimerContext` can be reused, nested within itself, or shared by concurrent calls.
-For a tight loop, reuse a context to avoid constructing one on every iteration:
-
-```python
-step_timer = TimerContext("step")
-for item in items:
-    with step_timer:
-        process(item)
-```
-
-Timings accumulate until `clear_execution_timings()` is called. Clearing also discards
-samples from sections that were already active, without disturbing their nesting stack.
-Sections started after the clear are recorded normally; if their parent was cleared, they
-are reported as top-level sections and count toward the total. Reports include completed calls;
-an active section's current duration is added only when it exits.
-
-### Measuring overhead
-
-Run the repeatable benchmark with `uv run python benchmarks/overhead.py`. It measures
-fresh and reused contexts, sync and async decorators, nesting, and reporting. Compare
-results using the same interpreter and machine; see [benchmarks/README.md](https://github.com/seba2390/ExecutionTimer/blob/main/benchmarks/README.md).
-
-## API
-
-| Function | Description |
-| --- | --- |
-| `TimerContext(name, category=DEFAULT_CATEGORY, counter=None)` | Context manager **and** decorator for timing a section. |
-| `get_execution_times_report(*, flatten=True)` | Formatted, indented report of all sections (`""` if none). |
-| `log_execution_times(*, flatten=True, logger=None)` | Log that report at `INFO` level (a warning if empty); a no-op if `INFO` is disabled. |
-| `get_execution_timings(*, flatten=True)` | Timings as `dict[tuple[str, ...], TimingReport]`. |
-| `get_execution_times_json(*, flatten=True, indent=2)` | All timings as a JSON string. |
-| `save_execution_timings_json(path, *, flatten=True, indent=2)` | Write timings to a JSON file; returns the `Path`. |
-| `get_total_time()` | Total seconds across all top-level sections. |
-| `get_total_category_time(category)` | Total seconds in a category (top-most entries only). |
-| `clear_execution_timings()` | Reset all recorded timings. |
-| `register_forbidden_nesting(outer, inner)` | Forbid `inner` category directly inside `outer`. |
-| `clear_forbidden_nesting()` | Remove all nesting rules. |
-
-`flatten=True` merges `counter` variants of a section back together; `flatten=False`
-keeps each `name[i]` separate.
-
-Exported types: `TimingReport`, `SectionRecord`, `TimingsPayload`, and `DEFAULT_CATEGORY`.
-The package ships a `py.typed` marker, so type checkers use the inline annotations.
-
-## Development
-
-Requires [uv](https://docs.astral.sh/uv/).
-
-```bash
-uv sync
-uv run pytest --cov
-uv run ruff check --fix && uv run ruff format
-uv run basedpyright
-```
-
-See [CONTRIBUTING.md](https://github.com/seba2390/ExecutionTimer/blob/main/CONTRIBUTING.md) for the full workflow, and
-[CHANGELOG.md](https://github.com/seba2390/ExecutionTimer/blob/main/CHANGELOG.md) for release notes.
+- [Getting started](https://seba2390.github.io/ExecutionTimer/getting-started.html)
+- User guide: [timing code](https://seba2390.github.io/ExecutionTimer/guide/timing-code.html),
+  [counters](https://seba2390.github.io/ExecutionTimer/guide/counters.html),
+  [categories](https://seba2390.github.io/ExecutionTimer/guide/categories.html),
+  [reports and JSON export](https://seba2390.github.io/ExecutionTimer/guide/reports.html),
+  [threads, asyncio and generators](https://seba2390.github.io/ExecutionTimer/guide/concurrency.html)
+- [API reference](https://seba2390.github.io/ExecutionTimer/api.html)
+- [Changelog](https://github.com/seba2390/ExecutionTimer/blob/main/CHANGELOG.md) and
+  [contributing guide](https://github.com/seba2390/ExecutionTimer/blob/main/CONTRIBUTING.md)
 
 ## License
 
