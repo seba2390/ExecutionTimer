@@ -18,23 +18,24 @@ make instrumentation costs visible; application speedups depend on the work bein
 ## Local comparison
 
 Measured on macOS 26.6.2, ARM64, CPython 3.14.5, using 100,000 operations and nine repeats.
-The baseline is commit `008494c` (version 0.1.0); the updated column is version 1.0.2.
-Both versions ran the same script, one after the other. Values below are microseconds per
-operation and include the benchmark function call; plain calls cost approximately
-0.02 µs and plain awaits 0.06 µs in both runs.
+The baseline is commit `008494c` (version 0.1.0). All three versions ran the same script,
+one after the other. Values below are microseconds per operation and include the benchmark
+function call; plain calls cost approximately 0.02 µs and plain awaits 0.06 µs in every
+run. The last column compares 1.0.3 with the baseline.
 
-| Operation | Baseline (µs) | Updated (µs) | Reduction |
-| --- | ---: | ---: | ---: |
-| New context | 1.558 | 1.101 | 29% |
-| Reused context | 1.390 | 1.039 | 25% |
-| Decorated call | 1.623 | 1.129 | 30% |
-| Decorated await | 1.711 | 1.133 | 34% |
-| Five nested contexts | 7.961 | 5.380 | 32% |
-| Total time, 1,000 sections | 519.131 | 43.188 | 92% |
-| JSON, 1,000 sections | 1,235.188 | 1,064.559 | 14% |
-| Disabled logging, 1,000 sections | 572.003 | 0.098 | >99.9% |
+| Operation | 0.1.0 (µs) | 1.0.2 (µs) | 1.0.3 (µs) | Reduction |
+| --- | ---: | ---: | ---: | ---: |
+| New context | 1.604 | 1.116 | 0.877 | 45% |
+| Reused context | 1.433 | 1.013 | 0.786 | 45% |
+| Decorated call | 1.656 | 1.220 | 0.897 | 46% |
+| Decorated await | 1.800 | 1.197 | 0.948 | 47% |
+| Five nested contexts | 8.238 | 5.782 | 4.371 | 47% |
+| Total time, 1,000 sections | 522.668 | 43.786 | 43.630 | 92% |
+| JSON, 1,000 sections | 1,255.098 | 1,139.416 | 1,065.708 | 15% |
+| Disabled logging, 1,000 sections | 530.408 | 0.100 | 0.100 | >99.9% |
 
-Recording keeps each invocation's start time and cached path in a context-local frame.
-Decorators reuse their context instead of constructing one per call. Total-time queries
-avoid copying and flattening entries, JSON exports share one snapshot, and disabled
-logging returns before building a report.
+Recording keeps each invocation's start time and cached path in a context-local frame,
+stored as a plain tuple because a named tuple's constructor costs more than the rest of
+entering a section. Decorators reuse their context instead of constructing one per call.
+Total-time queries avoid copying and flattening entries, JSON exports share one snapshot,
+and disabled logging returns before building a report.
