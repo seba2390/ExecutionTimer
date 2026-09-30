@@ -247,8 +247,16 @@ class TimerContext:
         """Decorate a function to time its execution under this context.
 
         Coroutine functions are wrapped so the timing spans the entire ``await``, not just
-        creation of the coroutine object.
+        creation of the coroutine object. Generator functions are rejected: a wrapper would
+        time only creation of the generator object, not its iteration.
         """
+        if inspect.isgeneratorfunction(func) or inspect.isasyncgenfunction(func):
+            msg = (
+                f"Cannot decorate generator function {func.__qualname__!r}: only creating the generator "
+                "would be timed. Time the loop that consumes it, or its body between yields, with a "
+                "'with TimerContext(...)' block instead."
+            )
+            raise TypeError(msg)
         if inspect.iscoroutinefunction(func):
             # ``iscoroutinefunction`` narrows nothing useful for the type checker, so bridge
             # through an explicitly typed helper instead of leaking ``Any`` into the signature.
@@ -299,7 +307,10 @@ def log_execution_times(*, flatten: bool = True, logger: logging.Logger | None =
     """Log the execution-times report at INFO level; flatten counters if requested."""
     target = logger if logger is not None else _LOGGER
     if target.isEnabledFor(logging.INFO):
-        target.info(get_execution_times_report(flatten=flatten))
+        report = get_execution_times_report(flatten=flatten)
+        # An empty report has already been warned about; logging it would add a blank record.
+        if report:
+            target.info(report)
 
 
 def get_execution_timings(*, flatten: bool = True) -> dict[tuple[str, ...], TimingReport]:
@@ -345,7 +356,11 @@ def save_execution_timings_json(path: str | Path, *, flatten: bool = True, inden
 
 
 def get_total_time(*, flatten: bool = True) -> float:
-    """Get total elapsed seconds across all top-level sections."""
+    """Get total elapsed seconds across all top-level sections.
+
+    ``flatten`` has no effect, because merging counter variants cannot change the total. It is
+    accepted for symmetry with the other reporting functions.
+    """
     return _TIMER.compute_total_time(flatten=flatten)
 
 

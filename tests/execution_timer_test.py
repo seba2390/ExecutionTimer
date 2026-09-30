@@ -7,7 +7,7 @@ import json
 import logging
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from pathlib import Path
@@ -380,6 +380,32 @@ class TestTimerContextDecorator:
         assert ("outer",) in timings
         assert ("outer", "inner") in timings
 
+    def test_decorating_a_generator_function_raises(self) -> None:
+        def numbers() -> Iterator[int]:
+            yield 1
+
+        with pytest.raises(TypeError, match=r"Cannot decorate generator function '.*numbers'"):
+            _ = TimerContext("gen")(numbers)
+        assert raw_timings() == {}
+
+    def test_decorating_an_async_generator_function_raises(self) -> None:
+        async def numbers() -> AsyncIterator[int]:
+            yield 1
+
+        with pytest.raises(TypeError, match=r"Cannot decorate generator function '.*numbers'"):
+            _ = TimerContext("agen")(numbers)
+        assert raw_timings() == {}
+
+    def test_decorator_accepts_a_function_returning_a_generator(self) -> None:
+        """Only generator *functions* are rejected; a plain function may return an iterator."""
+
+        @TimerContext("factory")
+        def factory() -> Iterator[int]:
+            return iter([1, 2])
+
+        assert list(factory()) == [1, 2]
+        assert ("factory",) in raw_timings()
+
 
 class TestExceptions:
     def test_timing_recorded_when_body_raises(self) -> None:
@@ -694,6 +720,14 @@ class TestRobustness:
             assert get_execution_times_report() == ""
 
         assert [record.name for record in caplog.records] == ["execution_timer._timer"]
+
+    def test_logging_an_empty_registry_emits_only_the_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.INFO):
+            log_execution_times()
+
+        assert [(record.levelno, record.message) for record in caplog.records] == [
+            (logging.WARNING, "No timings to report.")
+        ]
 
 
 class TestRegressions:

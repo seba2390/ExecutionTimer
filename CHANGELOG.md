@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Decorating a generator function or an async generator function now raises `TypeError`.
+  Previously it silently timed only the creation of the generator object, which recorded
+  microseconds regardless of how long iteration took.
+- Python 3.11 is now supported; the minimum was 3.12 although nothing required it.
+
+### Fixed
+
+- `log_execution_times()` no longer logs an empty `INFO` record, after its warning, when
+  there are no timings.
+
+### Documentation
+
+- Explain that threads do not inherit the timing context, and how to nest thread work under
+  a section.
+- Explain how a section held open across a generator's `yield` absorbs the caller's sections.
+- Note that `flatten` has no effect on `get_total_time`.
+
+### Added
+
+- CI tests Python 3.11 and free-threaded Python 3.14t, and the package declares
+  free-threading support.
+- Workflows run with a read-only token by default and do not persist checkout credentials.
+
 ## [0.1.1] - 2026-09-20
 
 ### Fixed

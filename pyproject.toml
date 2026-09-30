@@ -5,7 +5,7 @@ description = "Hierarchical execution timing with user-defined categories."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 authors = [{ name = "Sebastian Yde Madsen" }]
 keywords = [
     "timing",
@@ -23,9 +23,11 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Free Threading :: 3 - Stable",
     "Programming Language :: Python :: Implementation :: CPython",
     "Topic :: Software Development",
     "Topic :: Software Development :: Testing",
@@ -85,7 +87,7 @@ fail_under = 95
 exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError"]
 
 [tool.ruff]
-target-version = "py312"
+target-version = "py311"
 line-length = 120
 src = ["src", "tests"]
 
@@ -103,5 +105,5 @@ select = [
 
 [tool.basedpyright]
 typeCheckingMode = "recommended"
-pythonVersion = "3.12"
+pythonVersion = "3.11"
 include = ["src", "tests"]

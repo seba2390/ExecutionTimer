@@ -26,7 +26,8 @@ Zero dependencies. Fully type annotated. Works with threads and `asyncio`.
 - 🌳 **Automatic hierarchy** — nesting `with` blocks nests the report, no wiring required
 - 🏷️ **User-defined categories** — tag sections with any string (`"gpu"`, `"io"`, `"db"`) and get per-category totals
 - ⚡ **Native async** — decorating an `async def` times the whole `await`, not the coroutine object
-- 🧵 **Thread and task safe** — context stacks are isolated per thread and per asyncio task
+- 🧵 **Thread and task safe** — context stacks are isolated per thread and per asyncio task,
+  including on free-threaded Python builds
 - 🔢 **Loop counters** — time each iteration separately, then merge them back together
 - 📤 **JSON export** — structured output for dashboards, CI, or an LLM
 - 🚫 **Nesting rules** — optionally forbid one category inside another to catch mistakes early
@@ -42,7 +43,7 @@ pip install executiontimer
 uv add executiontimer
 ```
 
-Requires Python 3.12+.
+Requires Python 3.11+.
 
 > **Note** — the install name is `executiontimer`, the import name is `execution_timer`:
 >
@@ -101,6 +102,10 @@ Coroutine functions are supported natively — the timing spans the entire `awai
 @TimerContext("fetch", category="io")
 async def fetch(url: str) -> bytes: ...
 ```
+
+Generator functions (including `async` generators) cannot be decorated and raise a
+`TypeError`: the decorator would time only the creation of the generator object, not its
+iteration. Time the loop that consumes the generator with a `with` block instead.
 
 ### Counters
 
@@ -204,6 +209,18 @@ New asyncio tasks inherit the timing context in which they are created. Their se
 nest under that parent; changes to each task's active stack remain independent. Await
 child tasks inside the parent section if you want the parent duration to include them.
 
+New threads do *not* inherit the timing context, so sections recorded in a thread
+appear at the top level of the report, and their time is added to the total alongside
+the section that started the thread. To nest thread work under the current section, run
+it with `contextvars.copy_context().run(...)` or `asyncio.to_thread(...)`. Either way,
+concurrent threads accumulate overlapping time. (Free-threaded builds of Python 3.14 make
+threads inherit the context by default.)
+
+Generators run in their caller's context. A `with TimerContext(...)` block that stays open
+across a `yield` therefore also contains whatever the caller times while the generator is
+paused, and its duration includes that paused time. Close sections before yielding, or
+time the loop that consumes the generator instead.
+
 ### Reusing contexts and clearing timings
 
 A `TimerContext` can be reused, nested within itself, or shared by concurrent calls.
@@ -238,7 +255,7 @@ results using the same interpreter and machine; see [benchmarks/README.md](bench
 | `get_execution_timings(*, flatten=True)` | Timings as `dict[tuple[str, ...], TimingReport]`. |
 | `get_execution_times_json(*, flatten=True, indent=2)` | All timings as a JSON string. |
 | `save_execution_timings_json(path, *, flatten=True, indent=2)` | Write timings to a JSON file; returns the `Path`. |
-| `get_total_time(*, flatten=True)` | Total seconds across all top-level sections. |
+| `get_total_time(*, flatten=True)` | Total seconds across all top-level sections (`flatten` has no effect on the sum). |
 | `get_total_category_time(category)` | Total seconds in a category (top-most entries only). |
 | `clear_execution_timings()` | Reset all recorded timings. |
 | `register_forbidden_nesting(outer, inner)` | Forbid `inner` category directly inside `outer`. |
