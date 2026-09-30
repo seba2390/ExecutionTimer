@@ -23,8 +23,8 @@ uv run ruff format
 uv run basedpyright
 ```
 
-All four must pass. Coverage is enforced at 95%; the current suite has 100% statement
-and branch coverage. Preserve coverage when adding or changing behavior.
+All four must pass. The suite has 100% statement and branch coverage, and CI enforces it.
+Any warning raised during the tests fails them.
 
 The test suite is also run against Python 3.11, 3.12, 3.13, 3.14 and free-threaded 3.14t
 on Linux, macOS and Windows.
@@ -63,8 +63,9 @@ Maintainers only:
 3. Run the checks above, build with `uv build`, and validate metadata with
    `uvx twine check --strict dist/*`. Use a clean output directory so old versions are
    not included in release artifacts.
-4. Commit, then push to `main` and wait for CI to pass.
-5. Publish a GitHub release tagged `vX.Y.Z`, targeting the validated commit on `main`.
+4. Commit on a branch and open a pull request. `main` is protected: it only accepts
+   pull requests whose `CI passed` check succeeds. Squash-merge once CI is green.
+5. Publish a GitHub release tagged `vX.Y.Z`, targeting the merged commit on `main`.
    Use that version's changelog entries as release notes.
 
 The [Publish to PyPI workflow](.github/workflows/publish.yml) runs when a GitHub release

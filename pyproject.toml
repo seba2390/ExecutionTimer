@@ -77,6 +77,9 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--strict-markers --strict-config"
+# Any warning fails the suite, so code paths that warn are tested as they behave under
+# warnings-as-errors, a common configuration in projects that use this package.
+filterwarnings = ["error"]
 
 [tool.coverage.run]
 source = ["src/execution_timer"]
@@ -84,7 +87,7 @@ branch = true
 
 [tool.coverage.report]
 show_missing = true
-fail_under = 95
+fail_under = 100
 exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError"]
 
 [tool.ruff]

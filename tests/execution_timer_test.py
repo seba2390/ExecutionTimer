@@ -2,17 +2,18 @@
 
 import asyncio
 import builtins
+import functools
 import inspect
 import json
 import logging
 import threading
 import time
 import warnings
-from collections.abc import AsyncIterator, Generator, Iterator
+from collections.abc import AsyncIterator, Callable, Generator, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from pathlib import Path
-from typing import cast
+from typing import ParamSpec, TypeVar, cast
 from unittest.mock import patch
 
 import pytest
@@ -33,6 +34,9 @@ from execution_timer import (
     register_forbidden_nesting,
     save_execution_timings_json,
 )
+
+P = ParamSpec("P")
+R = TypeVar("R")
 
 
 @pytest.fixture(autouse=True)
@@ -640,6 +644,89 @@ class TestAsyncDecorator:
         # No cross-task nesting or leakage to the top level.
         assert ("task0", "task1") not in timings
         assert ("child",) not in timings
+
+
+def passthrough(func: Callable[P, R]) -> Callable[P, R]:
+    """A plain decorator that hides whether ``func`` is a coroutine function."""
+
+    @functools.wraps(func)
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+class TestStackedAsyncDecorator:
+    """A plain decorator between ``TimerContext`` and an ``async def`` returns its coroutine."""
+
+    def test_times_the_await_not_just_the_call(self) -> None:
+        @TimerContext("stacked")
+        @passthrough
+        async def work() -> None:
+            await asyncio.sleep(0)
+
+        # The call that creates the coroutine takes 1 s, and awaiting it takes 4 s.
+        with patch.object(time, "perf_counter", side_effect=[0, 1, 1, 5]):
+            asyncio.run(work())
+
+        assert raw_timings() == {("stacked",): {"time": 5, "category": DEFAULT_CATEGORY}}
+
+    def test_real_await_is_covered(self) -> None:
+        @TimerContext("stacked")
+        @passthrough
+        async def work() -> None:
+            await asyncio.sleep(0.05)
+
+        asyncio.run(work())
+
+        # Same threshold rationale as the plain async decorator test above.
+        assert raw_timings()["stacked",]["time"] >= 0.01
+
+    def test_sections_inside_the_coroutine_nest_under_it(self) -> None:
+        @TimerContext("stacked")
+        @passthrough
+        async def work() -> None:
+            with TimerContext("inner"):
+                await asyncio.sleep(0)
+
+        async def main() -> None:
+            with TimerContext("outer"):
+                await work()
+
+        asyncio.run(main())
+
+        assert set(raw_timings()) == {("outer",), ("outer", "stacked"), ("outer", "stacked", "inner")}
+
+    def test_preserves_return_value_and_exceptions(self) -> None:
+        @TimerContext("compute")
+        @passthrough
+        async def compute() -> int:
+            await asyncio.sleep(0)
+            return 42
+
+        @TimerContext("failing")
+        @passthrough
+        async def failing() -> None:
+            await asyncio.sleep(0)
+            raise ValueError("bad")
+
+        assert asyncio.run(compute()) == 42
+        with pytest.raises(ValueError, match="bad"):
+            asyncio.run(failing())
+        assert set(raw_timings()) == {("compute",), ("failing",)}
+
+    def test_other_awaitables_are_returned_unchanged(self) -> None:
+        loop = asyncio.new_event_loop()
+        try:
+            future: asyncio.Future[int] = loop.create_future()
+
+            @TimerContext("returns_future")
+            def get_future() -> asyncio.Future[int]:
+                return future
+
+            assert get_future() is future
+        finally:
+            loop.close()
 
 
 class TestContextManagerProtocol:

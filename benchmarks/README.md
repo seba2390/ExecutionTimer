@@ -18,21 +18,21 @@ make instrumentation costs visible; application speedups depend on the work bein
 ## Local comparison
 
 Measured on macOS 26.6.2, ARM64, CPython 3.14.5, using 100,000 operations and nine repeats.
-The baseline is commit `008494c` (version 0.1.0); the updated column uses version 0.1.1.
-Both versions ran the same script. Values below are microseconds per operation and
-include the benchmark function call; plain calls cost approximately 0.017 µs and plain
-awaits 0.056 µs in both runs.
+The baseline is commit `008494c` (version 0.1.0); the updated column is version 1.0.2.
+Both versions ran the same script, one after the other. Values below are microseconds per
+operation and include the benchmark function call; plain calls cost approximately
+0.02 µs and plain awaits 0.06 µs in both runs.
 
 | Operation | Baseline (µs) | Updated (µs) | Reduction |
 | --- | ---: | ---: | ---: |
-| New context | 1.550 | 1.028 | 34% |
-| Reused context | 1.425 | 0.947 | 34% |
-| Decorated call | 1.604 | 1.011 | 37% |
-| Decorated await | 1.696 | 1.093 | 36% |
-| Five nested contexts | 7.792 | 5.116 | 34% |
-| Total time, 1,000 sections | 524.809 | 43.068 | 92% |
-| JSON, 1,000 sections | 1,177.635 | 1,005.600 | 15% |
-| Disabled logging, 1,000 sections | 520.167 | 0.099 | >99.9% |
+| New context | 1.558 | 1.101 | 29% |
+| Reused context | 1.390 | 1.039 | 25% |
+| Decorated call | 1.623 | 1.129 | 30% |
+| Decorated await | 1.711 | 1.133 | 34% |
+| Five nested contexts | 7.961 | 5.380 | 32% |
+| Total time, 1,000 sections | 519.131 | 43.188 | 92% |
+| JSON, 1,000 sections | 1,235.188 | 1,064.559 | 14% |
+| Disabled logging, 1,000 sections | 572.003 | 0.098 | >99.9% |
 
 Recording keeps each invocation's start time and cached path in a context-local frame.
 Decorators reuse their context instead of constructing one per call. Total-time queries

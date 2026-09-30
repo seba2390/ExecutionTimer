@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-09-30
+
+### Fixed
+
+- Decorating a function that returns a coroutine, typically because another decorator
+  sits between `TimerContext` and an `async def`, now times the `await`. Previously the
+  section recorded only the call that created the coroutine, a few microseconds however
+  long the coroutine ran. Other awaitables, such as futures and tasks, are returned
+  unchanged.
+
+### Changed
+
+- The test suite fails on any warning, and CI requires 100% statement and branch coverage
+  rather than 95%.
+
+### Documentation
+
+- Note that flattening also merges sections whose own names end in an integer, such as
+  `"row[1]"` and `"row[2]"`.
+- The release steps in the contributing guide describe the pull-request flow that the
+  protected `main` branch requires.
+- Refresh the overhead benchmark against version 1.0.2.
+
 ## [1.0.1] - 2026-09-30
 
 ### Fixed
@@ -149,7 +172,8 @@ First public release on PyPI.
   `py.typed` marker so type checkers use the inline annotations.
 - `__version__` attribute on the package.
 
-[Unreleased]: https://github.com/seba2390/ExecutionTimer/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/seba2390/ExecutionTimer/compare/v1.0.2...HEAD
+[1.0.2]: https://github.com/seba2390/ExecutionTimer/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/seba2390/ExecutionTimer/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/seba2390/ExecutionTimer/compare/v0.2.0...v1.0.0
 [0.2.0]: https://github.com/seba2390/ExecutionTimer/compare/v0.1.1...v0.2.0
