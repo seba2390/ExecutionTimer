@@ -7,8 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-These changes clean up the public API ahead of a stable 1.0 release; three of them are
-breaking.
+Three changes below are breaking. They clean up the public API ahead of a stable 1.0
+release.
 
 ### Changed
 
@@ -40,6 +40,12 @@ breaking.
   for the rest of the thread. The timer now emits a `RuntimeWarning`, records the exited
   section, and discards the unfinished inner sections. Exiting a section that is no longer
   active does nothing, so closing the paused generator later no longer raises either.
+
+### Security
+
+- Workflows pin every action to a full commit SHA, with the release as a comment that
+  Dependabot keeps current, and CI installs dependencies with `uv sync --locked` so a
+  stale lockfile fails the build.
 
 ## [0.2.0] - 2026-09-30
 
