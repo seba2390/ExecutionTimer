@@ -7,17 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-09-30
+
+### Changed
+
+- Entering and exiting a section is 20–25% faster, about 0.25 µs less per section on
+  CPython 3.14. Each active section's state is now a plain tuple rather than a named
+  tuple, whose constructor cost more than the rest of section entry. Behaviour is
+  unchanged.
+
 ### Documentation
 
 - A documentation site at <https://seba2390.github.io/ExecutionTimer/>, with a getting
   started guide, a user guide and an API reference generated from the docstrings. It is
   built with Sphinx and deployed to GitHub Pages whenever `main` changes. The package's
-  `Documentation` link points to it from the next release on.
+  `Documentation` link points to it from this release on.
 - The README is shorter and links to the site for details.
 - Public functions and types have full docstrings, with parameters, return values and
   exceptions.
 - The Python examples in the README and the documentation run as part of the test suite,
   and CI builds the site on every pull request, failing on any warning.
+- Refresh the overhead benchmark, comparing 0.1.0, 1.0.2 and 1.0.3.
 
 ## [1.0.2] - 2026-09-30
 
@@ -184,7 +194,8 @@ First public release on PyPI.
   `py.typed` marker so type checkers use the inline annotations.
 - `__version__` attribute on the package.
 
-[Unreleased]: https://github.com/seba2390/ExecutionTimer/compare/v1.0.2...HEAD
+[Unreleased]: https://github.com/seba2390/ExecutionTimer/compare/v1.0.3...HEAD
+[1.0.3]: https://github.com/seba2390/ExecutionTimer/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/seba2390/ExecutionTimer/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/seba2390/ExecutionTimer/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/seba2390/ExecutionTimer/compare/v0.2.0...v1.0.0

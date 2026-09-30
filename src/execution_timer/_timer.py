@@ -20,7 +20,7 @@ from contextvars import ContextVar
 from itertools import count
 from pathlib import Path
 from types import TracebackType
-from typing import Final, NamedTuple, ParamSpec, TypedDict, TypeVar, cast
+from typing import Final, ParamSpec, TypeAlias, TypedDict, TypeVar, cast
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -71,14 +71,10 @@ class _TimesDict(TypedDict):
     category: str
 
 
-class _Frame(NamedTuple):
-    """Per-invocation state, with a cached path and an immutable parent link."""
-
-    path: tuple[str, ...]
-    category: str
-    start_time: float
-    entry: _TimesDict
-    parent: _Frame | None
+# Per-invocation state, with a cached path and an immutable parent link:
+# ``(path, category, start_time, entry, parent)``. A plain tuple rather than a NamedTuple,
+# whose constructor runs in Python and costs more than the rest of section entry combined.
+_Frame: TypeAlias = "tuple[tuple[str, ...], str, float, _TimesDict, _Frame | None]"
 
 
 _ACTIVE_CONTEXT: ContextVar[_Frame | None] = ContextVar("execution_timer_context", default=None)
@@ -143,10 +139,10 @@ class _ExecutionTimer:
     def start_timer(self, name: str, category: str) -> None:
         """Start timing a section under the given name within the active context."""
         parent = _ACTIVE_CONTEXT.get()
-        full_name = (*parent.path, name) if parent is not None else (name,)
+        full_name = (*parent[0], name) if parent is not None else (name,)
         with self._lock:
-            if parent is not None and (parent.category, category) in self.forbidden_nesting:
-                msg = f"Category '{category}' is not allowed inside category '{parent.category}'."
+            if parent is not None and (parent[1], category) in self.forbidden_nesting:
+                msg = f"Category '{category}' is not allowed inside category '{parent[1]}'."
                 raise ValueError(msg)
             sequence = next(self._sequence)
             entry: _TimesDict | None = self.timings.get(full_name)
@@ -156,7 +152,7 @@ class _ExecutionTimer:
             else:
                 entry["sequence"] = sequence
                 entry["category"] = category
-        _ = _ACTIVE_CONTEXT.set(_Frame(full_name, category, time.perf_counter(), entry, parent))
+        _ = _ACTIVE_CONTEXT.set((full_name, category, time.perf_counter(), entry, parent))
 
     def stop_timer(self, name: str) -> None:
         """Stop timing a section and accumulate its elapsed time.
@@ -171,19 +167,20 @@ class _ExecutionTimer:
         end_time = time.perf_counter()
         active = _ACTIVE_CONTEXT.get()
         frame = active
-        while frame is not None and frame.path[-1] != name:
-            frame = frame.parent
+        while frame is not None and frame[0][-1] != name:
+            frame = frame[4]
         if frame is None:
             return
+        _, _, start_time, entry, parent = frame
         with self._lock:
             # A clear detaches this entry from the registry. Updating the detached object
             # cannot resurrect an old sample or add it to a replacement at the same path.
-            frame.entry["elapsed_time"] += end_time - frame.start_time
-        _ = _ACTIVE_CONTEXT.set(frame.parent)
+            entry["elapsed_time"] += end_time - start_time
+        _ = _ACTIVE_CONTEXT.set(parent)
         if frame is not active and active is not None:
             # Warn only once the state is consistent: warnings configured as errors raise here.
             msg = (
-                f"Section '{name}' exited while '{active.path[-1]}' was still active; discarding the "
+                f"Section '{name}' exited while '{active[0][-1]}' was still active; discarding the "
                 "unfinished inner sections. Close sections before a generator yields."
             )
             warnings.warn(msg, RuntimeWarning, stacklevel=3)
