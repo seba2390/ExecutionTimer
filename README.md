@@ -229,7 +229,8 @@ time the loop that consumes the generator instead.
 If the caller's section exits while a paused generator's section is still open, the
 timer never raises: it emits a `RuntimeWarning`, records the caller's section, and
 discards the generator's unfinished one, so later sections nest correctly. Closing that
-generator afterwards does nothing.
+generator afterwards does nothing. If warnings are configured as errors, the warning is
+raised only after that cleanup, so the timings and nesting stay consistent.
 
 ### Reusing contexts and clearing timings
 
@@ -245,7 +246,8 @@ for item in items:
 
 Timings accumulate until `clear_execution_timings()` is called. Clearing also discards
 samples from sections that were already active, without disturbing their nesting stack.
-Sections started after the clear are recorded normally. Reports include completed calls;
+Sections started after the clear are recorded normally; if their parent was cleared, they
+are reported as top-level sections and count toward the total. Reports include completed calls;
 an active section's current duration is added only when it exits.
 
 ### Measuring overhead
