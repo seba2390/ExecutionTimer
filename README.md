@@ -72,7 +72,7 @@ print(get_execution_times_report())
 ```
 
 ```text
-Total calculation time: 0.3156 s.
+Total time: 0.3156 s.
 
 load_data: 0.1219 s (38.62%)
 solve: 0.1937 s (61.38%)
@@ -124,6 +124,11 @@ get_execution_timings(flatten=False)  # {("step[0]",): ..., ("step[1]",): ..., .
 Flattening removes the final integer suffix (including negative counters). Other
 bracketed names such as `array[index]` are preserved. If merged entries have different
 categories, the category from the most recently entered section is used.
+
+Each counter value is stored as its own section until `clear_execution_timings()` is
+called, so a long-running process that times an unbounded loop with `counter=` keeps
+growing the registry. Clear it periodically, or drop `counter=` to accumulate into one
+section.
 
 ### Categories
 
@@ -247,7 +252,7 @@ an active section's current duration is added only when it exits.
 
 Run the repeatable benchmark with `uv run python benchmarks/overhead.py`. It measures
 fresh and reused contexts, sync and async decorators, nesting, and reporting. Compare
-results using the same interpreter and machine; see [benchmarks/README.md](benchmarks/README.md).
+results using the same interpreter and machine; see [benchmarks/README.md](https://github.com/seba2390/ExecutionTimer/blob/main/benchmarks/README.md).
 `log_execution_times()` skips building a report when its logger has `INFO` disabled.
 
 ## API
@@ -255,12 +260,12 @@ results using the same interpreter and machine; see [benchmarks/README.md](bench
 | Function | Description |
 | --- | --- |
 | `TimerContext(name, category=DEFAULT_CATEGORY, counter=None)` | Context manager **and** decorator for timing a section. |
-| `get_execution_times_report(*, flatten=True)` | Formatted, indented report of all sections. |
-| `log_execution_times(*, flatten=True, logger=None)` | Log that report at `INFO` level. |
+| `get_execution_times_report(*, flatten=True)` | Formatted, indented report of all sections (`""` if none). |
+| `log_execution_times(*, flatten=True, logger=None)` | Log that report at `INFO` level (a warning if empty). |
 | `get_execution_timings(*, flatten=True)` | Timings as `dict[tuple[str, ...], TimingReport]`. |
 | `get_execution_times_json(*, flatten=True, indent=2)` | All timings as a JSON string. |
 | `save_execution_timings_json(path, *, flatten=True, indent=2)` | Write timings to a JSON file; returns the `Path`. |
-| `get_total_time(*, flatten=True)` | Total seconds across all top-level sections (`flatten` has no effect on the sum). |
+| `get_total_time()` | Total seconds across all top-level sections. |
 | `get_total_category_time(category)` | Total seconds in a category (top-most entries only). |
 | `clear_execution_timings()` | Reset all recorded timings. |
 | `register_forbidden_nesting(outer, inner)` | Forbid `inner` category directly inside `outer`. |
@@ -283,9 +288,9 @@ uv run ruff check --fix && uv run ruff format
 uv run basedpyright
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow, and
-[CHANGELOG.md](CHANGELOG.md) for release notes.
+See [CONTRIBUTING.md](https://github.com/seba2390/ExecutionTimer/blob/main/CONTRIBUTING.md) for the full workflow, and
+[CHANGELOG.md](https://github.com/seba2390/ExecutionTimer/blob/main/CHANGELOG.md) for release notes.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](https://github.com/seba2390/ExecutionTimer/blob/main/LICENSE).

@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+These changes clean up the public API ahead of a stable 1.0 release; three of them are
+breaking.
+
+### Changed
+
+- **Breaking:** the report from `get_execution_times_report()` no longer starts with a
+  blank line, and its header reads `Total time:` rather than `Total calculation time:`.
+  `log_execution_times()` still starts the report on its own line.
+- **Breaking:** `TimerContext.timer` is now private (`_timer`). It exposed the internal
+  registry, which is not part of the public API.
+- `get_execution_times_report()` no longer logs a warning when there are no timings; it
+  returns `""`. `log_execution_times()` warns instead, on the logger it was given, so
+  building an empty report no longer prints to stderr when logging is not configured.
+
+### Removed
+
+- **Breaking:** the `flatten` parameter of `get_total_time()`, which had no effect.
+
+### Documentation
+
+- README links to the changelog, contributing guide, benchmarks and license are absolute,
+  so they work on PyPI.
+- Note that each `counter=` value is kept as a separate section until the timings are
+  cleared.
+
 ### Fixed
 
 - Exiting a section while an inner one is still active, typically because a paused

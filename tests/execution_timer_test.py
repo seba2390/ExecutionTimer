@@ -191,15 +191,17 @@ class TestReporting:
 
         report = get_execution_times_report()
 
-        assert "Total calculation time" in report
+        assert report.startswith("Total time: ")
         assert "context_report:" in report
         assert "context_report_nested:" in report
         for i in range(3):
             assert f"..  context_sub_{i}:" in report
             assert f"..  ..  context_subsub_{i}:" in report
 
-    def test_report_empty_when_no_timings(self) -> None:
-        assert get_execution_times_report() == ""
+    def test_report_empty_when_no_timings(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.DEBUG):
+            assert get_execution_times_report() == ""
+        assert caplog.records == []
 
     def test_report_flatten_flag(self) -> None:
         with patch.object(time, "perf_counter", side_effect=[0, 1, 1, 2]):
@@ -271,7 +273,7 @@ class TestOutput:
         with caplog.at_level(logging.INFO):
             log_execution_times()
 
-        assert "Total calculation time" in caplog.text
+        assert "Total time: " in caplog.text
         assert "logged:" in caplog.text
 
     def test_get_execution_times_json_is_valid_and_structured(self) -> None:
@@ -716,8 +718,8 @@ class TestRobustness:
         assert errors == []
 
     def test_logging_uses_the_package_logger_not_the_root_logger(self, caplog: pytest.LogCaptureFixture) -> None:
-        with caplog.at_level(logging.WARNING):
-            assert get_execution_times_report() == ""
+        with caplog.at_level(logging.INFO):
+            log_execution_times()
 
         assert [record.name for record in caplog.records] == ["execution_timer._timer"]
 
@@ -960,7 +962,7 @@ class TestLifecycle:
         with ExitStack() as stack:
             for _ in range(1_100):
                 _ = stack.enter_context(TimerContext("level"))
-        assert len(get_execution_times_report(flatten=False).splitlines()) == 1_103
+        assert len(get_execution_times_report(flatten=False).splitlines()) == 1_102
 
     def test_async_cancellation_records_time_and_restores_parent(self) -> None:
         @TimerContext("cancelled")
@@ -1020,7 +1022,7 @@ class TestSnapshotSemantics:
         payload = cast(TimingsPayload, json.loads(get_execution_times_json(flatten=flatten)))
         assert payload["total_category_time"] == {"cpu": 5.0, "io": 3.0}
         assert get_total_category_time("cpu") == 5.0
-        assert get_total_time(flatten=flatten) == 5.0
+        assert get_total_time() == 5.0
 
     def test_empty_json(self) -> None:
         assert json.loads(get_execution_times_json(indent=None)) == {
@@ -1048,5 +1050,5 @@ class TestSnapshotSemantics:
         with caplog.at_level(logging.INFO, logger=logger.name):
             log_execution_times(flatten=False, logger=logger)
         assert [(record.name, record.message) for record in caplog.records] == [
-            (logger.name, get_execution_times_report(flatten=False))
+            (logger.name, "\n" + get_execution_times_report(flatten=False))
         ]
